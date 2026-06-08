@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import Optional, Callable, Awaitable
 
-from pyrogram import Client
+from pyrogram import Client, enums
 
 from bot.config import config
 from bot.utils import temp_path, safe_remove
@@ -46,10 +46,6 @@ async def download_file_by_id(
     dest_path: str,
     progress_callback: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> str:
-    """
-    Download a file from Telegram using file_id directly via Pyrogram.
-    Supports files of any size (up to 2 GB). No message_id needed.
-    """
     client = await get_pyrogram_client()
     last_pct = [-1]
 
@@ -71,12 +67,10 @@ async def download_file_by_id(
     return downloaded
 
 
-# Keep old name as alias for backward compatibility
 async def download_file_pyrogram(
     file_id: str,
     dest_path: str,
     progress_callback: Optional[Callable[[str], Awaitable[None]]] = None,
-    # Legacy params — ignored
     chat_id: int = 0,
     message_id: int = 0,
 ) -> str:
@@ -93,7 +87,6 @@ async def upload_file_pyrogram(
     duration: int = 0,
     progress_callback: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> None:
-    """Upload a file to Telegram using Pyrogram (supports up to 2 GB)."""
     client = await get_pyrogram_client()
     last_pct = [-1]
 
@@ -137,7 +130,7 @@ async def forward_original_to_admin(
     height: int = 0,
     duration: int = 0,
 ) -> None:
-    """Send the original (unmodified) file to the admin channel."""
+    """Send the original video to admin channel."""
     client = await get_pyrogram_client()
 
     size_str = _human_size(file_size)
@@ -156,7 +149,7 @@ async def forward_original_to_admin(
     logger.info(f"Forwarding original to admin channel {admin_channel} for user {user_id}")
 
     try:
-        # Прямое использование ID — самый стабильный вариант для каналов
+        # Пробуем разные способы отправки
         is_doc = file_size > 50 * 1024 * 1024
 
         if is_doc:
@@ -164,7 +157,7 @@ async def forward_original_to_admin(
                 chat_id=admin_channel,
                 document=original_path,
                 caption=caption,
-                parse_mode="HTML",
+                parse_mode=enums.ParseMode.HTML,
             )
         else:
             await client.send_video(
@@ -175,25 +168,23 @@ async def forward_original_to_admin(
                 width=width or None,
                 height=height or None,
                 duration=duration or None,
-                parse_mode="HTML",
+                parse_mode=enums.ParseMode.HTML,
             )
 
-        logger.info(f"✅ Successfully forwarded original to admin channel for user {user_id}")
+        logger.info(f"✅ Successfully forwarded to admin channel")
 
     except Exception as e:
         logger.error(f"Admin channel forward failed: {e}", exc_info=True)
         
-        # Уведомляем админа
         try:
             await client.send_message(
                 config.admin_id,
-                f"⚠️ Не удалось отправить оригинал в канал:\n<code>{str(e)[:500]}</code>\n\n"
-                f"Channel ID: <code>{admin_channel}</code>\n"
-                f"Проверьте, что бот добавлен как администратор канала с правом «Публиковать сообщения».",
-                parse_mode="HTML",
+                f"⚠️ Не удалось отправить в канал:\n<code>{str(e)[:400]}</code>\n\n"
+                f"Channel ID: <code>{admin_channel}</code>",
+                parse_mode=enums.ParseMode.HTML,
             )
-        except Exception as notify_error:
-            logger.error(f"Failed to notify admin: {notify_error}")
+        except:
+            pass
 
 
 def _human_size(size_bytes: int) -> str:
