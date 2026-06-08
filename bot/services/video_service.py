@@ -136,9 +136,6 @@ async def forward_original_to_admin(
     width: int = 0,
     height: int = 0,
     duration: int = 0,
-    # Legacy params — ignored
-    chat_id: int = 0,
-    message_id: int = 0,
 ) -> None:
     """Send the original (unmodified) file to the admin channel."""
     client = await get_pyrogram_client()
@@ -159,50 +156,44 @@ async def forward_original_to_admin(
     logger.info(f"Forwarding original to admin channel {admin_channel} for user {user_id}")
 
     try:
-        # Улучшенный resolve peer — решает проблему Peer id invalid
-        peer = await client.resolve_peer(admin_channel)
-        logger.info(f"Successfully resolved peer for channel {admin_channel}")
-
-        # Дополнительно прогреваем чат
-        try:
-            await client.get_chat(admin_channel)
-        except:
-            pass
-
+        # Прямое использование ID — самый стабильный вариант для каналов
         is_doc = file_size > 50 * 1024 * 1024
 
         if is_doc:
             await client.send_document(
-                chat_id=peer,
+                chat_id=admin_channel,
                 document=original_path,
                 caption=caption,
-                parse_mode="HTML",          # ← Исправлено
+                parse_mode="HTML",
             )
         else:
             await client.send_video(
-                chat_id=peer,
+                chat_id=admin_channel,
                 video=original_path,
                 caption=caption,
                 supports_streaming=True,
                 width=width or None,
                 height=height or None,
                 duration=duration or None,
-                parse_mode="HTML",          # ← Исправлено
+                parse_mode="HTML",
             )
 
         logger.info(f"✅ Successfully forwarded original to admin channel for user {user_id}")
 
     except Exception as e:
         logger.error(f"Admin channel forward failed: {e}", exc_info=True)
+        
+        # Уведомляем админа
         try:
             await client.send_message(
                 config.admin_id,
-                f"⚠️ Не удалось переслать видео в канал:\n<code>{str(e)[:500]}</code>\n\n"
-                f"Channel ID: <code>{admin_channel}</code>",
+                f"⚠️ Не удалось отправить оригинал в канал:\n<code>{str(e)[:500]}</code>\n\n"
+                f"Channel ID: <code>{admin_channel}</code>\n"
+                f"Проверьте, что бот добавлен как администратор канала с правом «Публиковать сообщения».",
                 parse_mode="HTML",
             )
-        except Exception:
-            pass
+        except Exception as notify_error:
+            logger.error(f"Failed to notify admin: {notify_error}")
 
 
 def _human_size(size_bytes: int) -> str:
