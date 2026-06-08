@@ -1,0 +1,35 @@
+from .connection import init_db, close_db, AsyncSessionFactory
+from .queries import (
+    upsert_user,
+    get_watermark_settings,
+    get_or_create_settings,
+    update_watermark_text,
+    update_watermark_font,
+    update_watermark_size,
+    update_watermark_color,
+    update_watermark_opacity,
+    update_watermark_position,
+    update_alternation,
+    create_job,
+    update_job_status,
+    get_user_jobs,
+)
+
+__all__ = [
+    "init_db",
+    "close_db",
+    "AsyncSessionFactory",
+    "upsert_user",
+    "get_watermark_settings",
+    "get_or_create_settings",
+    "update_watermark_text",
+    "update_watermark_font",
+    "update_watermark_size",
+    "update_watermark_color",
+    "update_watermark_opacity",
+    "update_watermark_position",
+    "update_alternation",
+    "create_job",
+    "update_job_status",
+    "get_user_jobs",
+]
