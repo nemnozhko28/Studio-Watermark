@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from typing import Optional, Callable, Awaitable
 
-from pyrogram import Client, enums
+from pyrogram import Client
 
 from bot.config import config
 from bot.utils import temp_path, safe_remove
@@ -130,9 +130,10 @@ async def forward_original_to_admin(
     height: int = 0,
     duration: int = 0,
 ) -> None:
-    """Send the original file to admin channel using aiogram (stable version)"""
+    """Send original to admin channel using aiogram with FSInputFile"""
     from aiogram import Bot
     from aiogram.enums import ParseMode
+    from aiogram.types import FSInputFile
 
     size_str = _human_size(file_size)
     fmt = Path(original_filename).suffix.lstrip(".").upper() or mime_type
@@ -152,39 +153,38 @@ async def forward_original_to_admin(
     bot = None
     try:
         bot = Bot(token=config.bot_token)
+        video_file = FSInputFile(original_path)
 
         is_doc = file_size > 50 * 1024 * 1024
 
-        with open(original_path, "rb") as file:
-            if is_doc:
-                await bot.send_document(
-                    chat_id=admin_channel,
-                    document=file,
-                    caption=caption,
-                    parse_mode=ParseMode.HTML,
-                )
-            else:
-                await bot.send_video(
-                    chat_id=admin_channel,
-                    video=file,
-                    caption=caption,
-                    supports_streaming=True,
-                    width=width or None,
-                    height=height or None,
-                    duration=duration or None,
-                    parse_mode=ParseMode.HTML,
-                )
+        if is_doc:
+            await bot.send_document(
+                chat_id=admin_channel,
+                document=video_file,
+                caption=caption,
+                parse_mode=ParseMode.HTML,
+            )
+        else:
+            await bot.send_video(
+                chat_id=admin_channel,
+                video=video_file,
+                caption=caption,
+                supports_streaming=True,
+                width=width or None,
+                height=height or None,
+                duration=duration or None,
+                parse_mode=ParseMode.HTML,
+            )
 
         logger.info(f"✅ Successfully forwarded original to admin channel via aiogram")
 
     except Exception as e:
-        logger.error(f"Admin channel forward (aiogram) failed: {e}", exc_info=True)
-        
+        logger.error(f"Admin channel forward failed: {e}", exc_info=True)
         try:
             if bot:
                 await bot.send_message(
                     config.admin_id,
-                    f"⚠️ Не удалось отправить оригинал в канал:\n<code>{str(e)[:400]}</code>\n\n"
+                    f"⚠️ Ошибка отправки в канал:\n<code>{str(e)[:400]}</code>\n\n"
                     f"Channel ID: <code>{admin_channel}</code>",
                     parse_mode=ParseMode.HTML,
                 )
