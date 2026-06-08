@@ -5,6 +5,7 @@ from .settings_kb import (
     size_keyboard,
     color_keyboard,
     opacity_keyboard,
+    language_keyboard,
 )
 from .position_kb import position_keyboard, alternation_toggle_keyboard
 
@@ -15,6 +16,7 @@ __all__ = [
     "size_keyboard",
     "color_keyboard",
     "opacity_keyboard",
+    "language_keyboard",
     "position_keyboard",
     "alternation_toggle_keyboard",
 ]

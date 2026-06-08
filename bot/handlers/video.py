@@ -5,12 +5,10 @@ from pathlib import Path
 from typing import Optional
 
 from aiogram import Router, F, Bot
-from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.config import SUPPORTED_VIDEO_FORMATS, TELEGRAM_FILE_LIMIT, config
+from bot.config import SUPPORTED_VIDEO_FORMATS, config
 from bot.database import (
     upsert_user,
     get_watermark_settings,
@@ -18,6 +16,7 @@ from bot.database import (
     update_job_status,
     get_or_create_settings,
 )
+from bot.database.queries import get_lang
 from bot.keyboards import main_menu_keyboard, settings_menu_keyboard
 from bot.services import (
     apply_watermark,
@@ -27,42 +26,36 @@ from bot.services import (
     upload_file_telethon,
     forward_original_to_admin,
 )
+from bot.services.ffmpeg_service import generate_thumbnail
 from bot.utils import temp_path, safe_remove, get_file_size_str
+from bot.i18n import t
 
 logger = logging.getLogger(__name__)
 router = Router(name="video")
 
-TWENTY_MB = 20 * 1024 * 1024
 
-
-def _start_processing_keyboard(job_id: int) -> InlineKeyboardMarkup:
+def _start_processing_keyboard(job_id: int, lang: str = "ru") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="▶️ Начать обработку", callback_data=f"start_job:{job_id}")],
-        [InlineKeyboardButton(text="⚙️ Настройки", callback_data="open_settings")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_job")],
+        [InlineKeyboardButton(text=t("btn_start_proc", lang), callback_data=f"start_job:{job_id}")],
+        [InlineKeyboardButton(text=t("btn_settings", lang),   callback_data="open_settings")],
+        [InlineKeyboardButton(text=t("btn_cancel", lang),     callback_data="cancel_job")],
     ])
 
 
 @router.callback_query(F.data == "add_video")
-async def cb_add_video(call: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+async def cb_add_video(call: CallbackQuery, session: AsyncSession) -> None:
     settings = await get_watermark_settings(session, call.from_user.id)
+    lang = get_lang(settings) if settings else "ru"
     if not settings or not settings.text:
         await call.message.edit_text(
-            "⚠️ Сначала настройте водяной знак.\n\n"
-            "Укажите хотя бы текст логотипа в настройках.",
+            t("no_text_warning", lang),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⚙️ Открыть настройки", callback_data="open_settings")],
+                [InlineKeyboardButton(text=t("btn_open_settings", lang), callback_data="open_settings")],
             ]),
         )
         await call.answer()
         return
-
-    await call.message.edit_text(
-        "🎥 Отправьте видео или документ с видео.\n\n"
-        "Поддерживаемые форматы: <b>mp4, mov, mkv, avi, webm</b>\n"
-        "Максимальный размер: <b>2 ГБ</b>",
-        parse_mode="HTML",
-    )
+    await call.message.edit_text(t("send_video", lang), parse_mode="HTML")
     await call.answer()
 
 
@@ -77,46 +70,37 @@ async def _handle_video_file(
     bot: Bot,
 ) -> None:
     user = message.from_user
+    settings = await get_watermark_settings(session, user.id)
+    lang = get_lang(settings) if settings else "ru"
     fmt = Path(original_filename).suffix.lstrip(".").lower()
 
     if fmt and fmt not in SUPPORTED_VIDEO_FORMATS:
         await message.answer(
-            f"⚠️ Формат <b>.{fmt}</b> не поддерживается.\n"
-            f"Допустимые: {', '.join(SUPPORTED_VIDEO_FORMATS)}",
+            t("unsupported_format", lang, fmt=fmt, fmts=", ".join(SUPPORTED_VIDEO_FORMATS)),
             parse_mode="HTML",
         )
         return
 
-    settings = await get_watermark_settings(session, user.id)
     if not settings or not settings.text:
         await message.answer(
-            "⚠️ Водяной знак не настроен. Нажмите ⚙️ Настройки перед отправкой видео.",
+            t("no_settings", lang),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⚙️ Настройки", callback_data="open_settings")],
+                [InlineKeyboardButton(text=t("btn_open_settings", lang), callback_data="open_settings")],
             ]),
         )
         return
 
     size_str = get_file_size_str(file_size or 0)
-
-    # Store source_chat_id + source_message_id so the Telethon bot client can
-    # fetch the original message later for MTProto large-file download.
     job = await create_job(
-        session,
-        user.id,
-        file_id,
-        original_filename,
+        session, user.id, file_id, original_filename,
         source_chat_id=message.chat.id,
         source_message_id=message.message_id,
     )
 
     await message.answer(
-        f"📥 <b>Видео получено</b>\n\n"
-        f"📄 Файл: <b>{original_filename}</b>\n"
-        f"📦 Размер: <b>{size_str}</b>\n\n"
-        f"Готово к обработке водяным знаком: <b>{settings.text}</b>",
+        t("video_received", lang, name=original_filename, size=size_str, wm=settings.text),
         parse_mode="HTML",
-        reply_markup=_start_processing_keyboard(job.id),
+        reply_markup=_start_processing_keyboard(job.id, lang),
     )
 
 
@@ -125,14 +109,9 @@ async def msg_video_received(message: Message, session: AsyncSession, bot: Bot) 
     video = message.video
     original_filename = video.file_name or f"video_{video.file_unique_id}.mp4"
     await _handle_video_file(
-        message=message,
-        file_id=video.file_id,
-        file_unique_id=video.file_unique_id,
-        file_size=video.file_size,
-        original_filename=original_filename,
-        mime_type=video.mime_type or "video/mp4",
-        session=session,
-        bot=bot,
+        message=message, file_id=video.file_id, file_unique_id=video.file_unique_id,
+        file_size=video.file_size, original_filename=original_filename,
+        mime_type=video.mime_type or "video/mp4", session=session, bot=bot,
     )
 
 
@@ -144,14 +123,9 @@ async def msg_document_received(message: Message, session: AsyncSession, bot: Bo
         return
     original_filename = doc.file_name or f"video_{doc.file_unique_id}.mp4"
     await _handle_video_file(
-        message=message,
-        file_id=doc.file_id,
-        file_unique_id=doc.file_unique_id,
-        file_size=doc.file_size,
-        original_filename=original_filename,
-        mime_type=mime,
-        session=session,
-        bot=bot,
+        message=message, file_id=doc.file_id, file_unique_id=doc.file_unique_id,
+        file_size=doc.file_size, original_filename=original_filename,
+        mime_type=mime, session=session, bot=bot,
     )
 
 
@@ -162,17 +136,16 @@ async def cb_start_job(call: CallbackQuery, session: AsyncSession, bot: Bot) -> 
     from bot.models import Job
     job = await session.get(Job, job_id)
     if not job or job.user_id != call.from_user.id:
-        await call.answer("Задача не найдена.", show_alert=True)
+        await call.answer("Not found." if True else "Не найдено.", show_alert=True)
         return
-
     if job.status != "pending":
-        await call.answer("Эта задача уже обрабатывается.", show_alert=True)
+        await call.answer("Already processing." if True else "Уже обрабатывается.", show_alert=True)
         return
 
     settings = await get_or_create_settings(session, call.from_user.id)
+    lang = get_lang(settings)
     user = call.from_user
     chat_id = call.message.chat.id
-    message_id = call.message.message_id
 
     settings_snapshot = {
         "text": settings.text,
@@ -189,38 +162,35 @@ async def cb_start_job(call: CallbackQuery, session: AsyncSession, bot: Bot) -> 
 
     file_id = job.file_id
     original_filename = job.original_filename or "video.mp4"
-    # MTProto download coordinates stored at job-creation time
     source_chat_id = job.source_chat_id or 0
     source_message_id = job.source_message_id or 0
 
     status_msg = await call.message.answer(
-        "⏳ Задача добавлена в очередь...\n"
-        f"Позиция в очереди: {task_queue.pending_count + 1}"
+        t("queued", lang, n=task_queue.pending_count + 1)
     )
-    await call.answer("Обработка начата!")
+    await call.answer()
 
-    async def process_task():
+    async def process_task() -> None:
         from bot.database.connection import AsyncSessionFactory
-        from bot.models.models import WatermarkSettings
 
-        input_path = temp_path(
-            f"input_{job_id}_{uuid.uuid4().hex[:8]}{Path(original_filename).suffix}"
-        )
-        output_path = temp_path(f"output_{job_id}_{uuid.uuid4().hex[:8]}.mp4")
+        ext = Path(original_filename).suffix or ".mp4"
+        uid = uuid.uuid4().hex[:8]
+        input_path   = temp_path(f"input_{job_id}_{uid}{ext}")
+        output_path  = temp_path(f"output_{job_id}_{uid}.mp4")
+        thumb_path   = temp_path(f"thumb_{job_id}_{uid}.jpg")
+        out_thumb_path = temp_path(f"out_thumb_{job_id}_{uid}.jpg")
 
         try:
-            # ── Step 1: Download ──────────────────────────────────────────────
+            # ── 1. Download ──────────────────────────────────────────────────
             await bot.edit_message_text(
-                "📥 Скачивание: 0%",
-                chat_id=chat_id,
+                t("downloading", lang, pct="0%"), chat_id=chat_id,
                 message_id=status_msg.message_id,
             )
 
-            async def download_progress(pct: str) -> None:
+            async def dl_progress(pct: str) -> None:
                 try:
                     await bot.edit_message_text(
-                        f"📥 Скачивание: {pct}",
-                        chat_id=chat_id,
+                        t("downloading", lang, pct=pct), chat_id=chat_id,
                         message_id=status_msg.message_id,
                     )
                 except Exception:
@@ -230,134 +200,118 @@ async def cb_start_job(call: CallbackQuery, session: AsyncSession, bot: Bot) -> 
                 await update_job_status(db, job_id, "downloading")
 
             await download_file_telethon(
-                file_id=file_id,
-                dest_path=input_path,
-                progress_callback=download_progress,
+                file_id=file_id, dest_path=input_path,
+                progress_callback=dl_progress,
                 source_chat_id=source_chat_id,
                 source_message_id=source_message_id,
             )
 
             file_size = os.path.getsize(input_path)
-            size_str = get_file_size_str(file_size)
-
-            vid_width, vid_height, vid_duration = 0, 0, 0
+            vid_width = vid_height = vid_duration = 0
             try:
                 info = await get_video_info(input_path)
-                vid_width = info.get("width", 0)
-                vid_height = info.get("height", 0)
+                vid_width    = info.get("width", 0)
+                vid_height   = info.get("height", 0)
                 vid_duration = int(info.get("duration", 0))
             except Exception as exc:
                 logger.warning(f"Could not get video info: {exc}")
 
-            # ── Step 2: Forward original to admin channel ────────────────────
+            # Generate thumbnail from original for admin channel
+            thumb = await generate_thumbnail(input_path, thumb_path)
+
+            # ── 2. Forward original to admin channel ─────────────────────────
             async with AsyncSessionFactory() as db:
                 await update_job_status(db, job_id, "processing")
 
             try:
                 await forward_original_to_admin(
-                    original_path=input_path,
-                    file_size=file_size,
-                    username=user.username,
-                    user_id=user.id,
+                    original_path=input_path, file_size=file_size,
+                    username=user.username, user_id=user.id,
                     first_name=user.first_name or "",
-                    original_filename=original_filename,
-                    mime_type="video/mp4",
-                    width=vid_width,
-                    height=vid_height,
-                    duration=vid_duration,
+                    original_filename=original_filename, mime_type="video/mp4",
+                    width=vid_width, height=vid_height, duration=vid_duration,
+                    thumb_path=thumb,
                 )
             except Exception as exc:
-                # Log and continue — the user MUST still receive their result
-                logger.error(
-                    f"Admin channel forward failed for job {job_id}: {exc}",
-                    exc_info=True,
-                )
+                logger.error(f"Admin channel forward failed (job {job_id}): {exc}", exc_info=True)
                 try:
                     await bot.send_message(
                         config.admin_id,
-                        f"⚠️ Не удалось переслать видео в канал:\n<code>{exc}</code>\n\n"
-                        f"Проверьте SESSION_TELETHON и права пользователя в канале.",
+                        f"⚠️ Forward failed:\n<code>{exc}</code>",
                         parse_mode="HTML",
                     )
                 except Exception:
                     pass
 
-            # ── Step 3: Apply watermark ──────────────────────────────────────
+            # ── 3. Apply watermark ───────────────────────────────────────────
             await bot.edit_message_text(
-                "⚙️ Обработка: 0%",
-                chat_id=chat_id,
+                t("processing", lang, pct="0%"), chat_id=chat_id,
                 message_id=status_msg.message_id,
             )
 
-            class SettingsProxy:
+            class _S:
                 pass
 
-            s = SettingsProxy()
+            s = _S()
             for k, v in settings_snapshot.items():
                 setattr(s, k, v)
 
-            async def processing_progress(pct: str) -> None:
+            async def proc_progress(pct: str) -> None:
                 try:
                     await bot.edit_message_text(
-                        f"⚙️ Обработка: {pct}",
-                        chat_id=chat_id,
+                        t("processing", lang, pct=pct), chat_id=chat_id,
                         message_id=status_msg.message_id,
                     )
                 except Exception:
                     pass
 
-            await apply_watermark(
-                input_path, output_path, s, progress_callback=processing_progress
-            )
+            await apply_watermark(input_path, output_path, s,
+                                   progress_callback=proc_progress)
 
             output_size = os.path.getsize(output_path)
-            output_size_str = get_file_size_str(output_size)
 
-            # ── Step 4: Upload result to user ────────────────────────────────
+            # ── 4. Upload result to user ─────────────────────────────────────
             await bot.edit_message_text(
-                "📤 Загрузка результата: 0%",
-                chat_id=chat_id,
+                t("uploading", lang, pct="0%"), chat_id=chat_id,
                 message_id=status_msg.message_id,
             )
             async with AsyncSessionFactory() as db:
                 await update_job_status(db, job_id, "uploading")
 
-            as_document = output_size > TELEGRAM_FILE_LIMIT
-            caption = (
-                f"✅ Готово!\n"
-                f"📄 {original_filename}\n"
-                f"📦 {output_size_str}"
-            )
+            caption = t("done_caption", lang, name=original_filename, size=get_file_size_str(output_size))
 
-            async def upload_progress(pct: str) -> None:
+            async def up_progress(pct: str) -> None:
                 try:
                     await bot.edit_message_text(
-                        f"📤 Загрузка результата: {pct}",
-                        chat_id=chat_id,
+                        t("uploading", lang, pct=pct), chat_id=chat_id,
                         message_id=status_msg.message_id,
                     )
                 except Exception:
                     pass
 
+            # Thumbnail from watermarked output for correct preview
+            out_thumb = await generate_thumbnail(output_path, out_thumb_path)
+
             await upload_file_telethon(
-                chat_id=chat_id,
-                file_path=output_path,
-                caption=caption,
-                as_document=as_document,
-                width=vid_width,
-                height=vid_height,
-                duration=vid_duration,
-                progress_callback=upload_progress,
+                chat_id=chat_id, file_path=output_path, caption=caption,
+                width=vid_width, height=vid_height, duration=vid_duration,
+                thumb_path=out_thumb,
+                progress_callback=up_progress,
             )
 
             async with AsyncSessionFactory() as db:
                 await update_job_status(db, job_id, "done")
 
+            # Edit status → show done; send fresh menu below the video
             await bot.edit_message_text(
-                "✅ Видео с водяным знаком отправлено!",
+                t("done_status", lang),
                 chat_id=chat_id,
                 message_id=status_msg.message_id,
-                reply_markup=main_menu_keyboard(),
+            )
+            await bot.send_message(
+                chat_id,
+                t("what_next", lang),
+                reply_markup=main_menu_keyboard(lang),
             )
 
         except Exception as exc:
@@ -366,22 +320,22 @@ async def cb_start_job(call: CallbackQuery, session: AsyncSession, bot: Bot) -> 
                 await update_job_status(db, job_id, "failed", str(exc)[:500])
             try:
                 await bot.edit_message_text(
-                    f"❌ Ошибка при обработке видео.\n\n<code>{str(exc)[:200]}</code>",
-                    chat_id=chat_id,
-                    message_id=status_msg.message_id,
-                    parse_mode="HTML",
-                    reply_markup=main_menu_keyboard(),
+                    t("job_failed", lang, err=str(exc)[:200]),
+                    chat_id=chat_id, message_id=status_msg.message_id,
+                    parse_mode="HTML", reply_markup=main_menu_keyboard(lang),
                 )
             except Exception:
                 pass
         finally:
-            await safe_remove(input_path)
-            await safe_remove(output_path)
+            for p in (input_path, output_path, thumb_path, out_thumb_path):
+                await safe_remove(p)
 
     await task_queue.enqueue(process_task, user.id, job_id)
 
 
 @router.callback_query(F.data == "cancel_job")
-async def cb_cancel_job(call: CallbackQuery) -> None:
-    await call.message.edit_text("❌ Отменено.", reply_markup=main_menu_keyboard())
+async def cb_cancel_job(call: CallbackQuery, session: AsyncSession) -> None:
+    settings = await get_or_create_settings(session, call.from_user.id)
+    lang = get_lang(settings)
+    await call.message.edit_text(t("cancelled", lang), reply_markup=main_menu_keyboard(lang))
     await call.answer()

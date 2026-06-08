@@ -14,7 +14,9 @@ from bot.database import (
     update_watermark_position,
     update_alternation,
     update_watermark_delay,
+    update_language,
 )
+from bot.database.queries import get_lang
 from bot.keyboards import (
     settings_menu_keyboard,
     font_keyboard,
@@ -23,38 +25,43 @@ from bot.keyboards import (
     opacity_keyboard,
     position_keyboard,
     alternation_toggle_keyboard,
+    language_keyboard,
 )
 from bot.states import WatermarkSettingsStates
-from bot.config import POSITIONS
+from bot.i18n import t, pos_label
 
 logger = logging.getLogger(__name__)
 router = Router(name="settings")
 
 
+def _opacity_display(opacity_float: float) -> str:
+    return f"{int(round(opacity_float * 100))}%"
+
+
 async def _show_settings(target, session: AsyncSession, user_id: int, edit: bool = True) -> None:
     settings = await get_or_create_settings(session, user_id)
-    pos_label = POSITIONS.get(settings.position, settings.position)
-    alt_label = "вкл" if settings.alternation_enabled else "выкл"
-
+    lang = get_lang(settings)
+    alt_label = t("alt_on", lang) if settings.alternation_enabled else t("alt_off", lang)
     delay = getattr(settings, "delay_seconds", 0)
-    delay_label = f"{delay} сек." if delay else "нет"
+    delay_label = t("delay_sec", lang, n=delay) if delay else t("delay_none", lang)
 
     text = (
-        "⚙️ <b>Настройки водяного знака</b>\n\n"
-        f"✏️ Текст логотипа: <b>{settings.text or '(не задан)'}</b>\n"
-        f"🔤 Шрифт: <b>{settings.font}</b>\n"
-        f"📏 Размер: <b>{settings.size}</b>\n"
-        f"🎨 Цвет: <b>{settings.color}</b>\n"
-        f"💧 Прозрачность: <b>{settings.opacity}</b>\n"
-        f"📍 Позиция: <b>{pos_label}</b>\n"
-        f"🔄 Чередование: <b>{alt_label}</b>\n"
-        f"⏱ Задержка: <b>{delay_label}</b>"
+        t("settings_header", lang)
+        + t("settings_text_row", lang, v=settings.text or "(—)")
+        + t("settings_font_row", lang, v=settings.font)
+        + t("settings_size_row", lang, v=settings.size)
+        + t("settings_color_row", lang, v=settings.color)
+        + t("settings_opacity_row", lang, v=_opacity_display(settings.opacity))
+        + t("settings_pos_row", lang, v=pos_label(settings.position, lang))
+        + t("settings_alt_row", lang, v=alt_label)
+        + t("settings_delay_row", lang, v=delay_label)
     )
 
+    kb = settings_menu_keyboard(settings, lang)
     if edit:
-        await target.message.edit_text(text, reply_markup=settings_menu_keyboard(settings), parse_mode="HTML")
+        await target.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     else:
-        await target.answer(text, reply_markup=settings_menu_keyboard(settings), parse_mode="HTML")
+        await target.answer(text, reply_markup=kb, parse_mode="HTML")
 
 
 @router.callback_query(F.data == "open_settings")
@@ -64,36 +71,42 @@ async def cb_open_settings(call: CallbackQuery, session: AsyncSession, state: FS
     await call.answer()
 
 
-# ─── Text ───────────────────────────────────────────────────────────────────
+# ─── Text ─────────────────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "set_text")
-async def cb_set_text(call: CallbackQuery, state: FSMContext) -> None:
-    await call.message.edit_text("✏️ Введите текст водяного знака:")
+async def cb_set_text(call: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    settings = await get_or_create_settings(session, call.from_user.id)
+    lang = get_lang(settings)
+    await call.message.edit_text(t("enter_text", lang))
     await state.set_state(WatermarkSettingsStates.waiting_for_text)
     await call.answer()
 
 
 @router.message(WatermarkSettingsStates.waiting_for_text)
 async def msg_text_received(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    settings = await get_or_create_settings(session, message.from_user.id)
+    lang = get_lang(settings)
     text = message.text.strip()
     if len(text) > 200:
-        await message.answer("⚠️ Текст слишком длинный. Максимум 200 символов.")
+        await message.answer(t("text_too_long", lang))
         return
     await update_watermark_text(session, message.from_user.id, text)
     await state.clear()
     settings = await get_or_create_settings(session, message.from_user.id)
     await message.answer(
-        f"✅ Текст водяного знака сохранён: <b>{text}</b>",
+        t("text_saved", lang, v=text),
         parse_mode="HTML",
-        reply_markup=settings_menu_keyboard(settings),
+        reply_markup=settings_menu_keyboard(settings, lang),
     )
 
 
-# ─── Font ────────────────────────────────────────────────────────────────────
+# ─── Font ─────────────────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "set_font")
-async def cb_set_font(call: CallbackQuery, state: FSMContext) -> None:
-    await call.message.edit_text("🔤 Выберите шрифт:", reply_markup=font_keyboard())
+async def cb_set_font(call: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    settings = await get_or_create_settings(session, call.from_user.id)
+    lang = get_lang(settings)
+    await call.message.edit_text(t("choose_font", lang), reply_markup=font_keyboard(lang))
     await state.set_state(WatermarkSettingsStates.choosing_font)
     await call.answer()
 
@@ -103,15 +116,19 @@ async def cb_font_chosen(call: CallbackQuery, state: FSMContext, session: AsyncS
     font = call.data.split(":", 1)[1]
     await update_watermark_font(session, call.from_user.id, font)
     await state.clear()
-    await call.answer(f"Шрифт: {font}")
+    settings = await get_or_create_settings(session, call.from_user.id)
+    lang = get_lang(settings)
+    await call.answer(t("font_saved", lang, v=font))
     await _show_settings(call, session, call.from_user.id)
 
 
-# ─── Size ────────────────────────────────────────────────────────────────────
+# ─── Size ─────────────────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "set_size")
-async def cb_set_size(call: CallbackQuery, state: FSMContext) -> None:
-    await call.message.edit_text("📏 Выберите размер текста:", reply_markup=size_keyboard())
+async def cb_set_size(call: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    settings = await get_or_create_settings(session, call.from_user.id)
+    lang = get_lang(settings)
+    await call.message.edit_text(t("choose_size", lang), reply_markup=size_keyboard(lang))
     await state.set_state(WatermarkSettingsStates.choosing_size)
     await call.answer()
 
@@ -121,15 +138,19 @@ async def cb_size_chosen(call: CallbackQuery, state: FSMContext, session: AsyncS
     size = call.data.split(":", 1)[1]
     await update_watermark_size(session, call.from_user.id, size)
     await state.clear()
-    await call.answer(f"Размер: {size}")
+    settings = await get_or_create_settings(session, call.from_user.id)
+    lang = get_lang(settings)
+    await call.answer(t("size_saved", lang, v=size))
     await _show_settings(call, session, call.from_user.id)
 
 
-# ─── Color ───────────────────────────────────────────────────────────────────
+# ─── Color ────────────────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "set_color")
-async def cb_set_color(call: CallbackQuery, state: FSMContext) -> None:
-    await call.message.edit_text("🎨 Выберите цвет:", reply_markup=color_keyboard())
+async def cb_set_color(call: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    settings = await get_or_create_settings(session, call.from_user.id)
+    lang = get_lang(settings)
+    await call.message.edit_text(t("choose_color", lang), reply_markup=color_keyboard(lang))
     await state.set_state(WatermarkSettingsStates.choosing_color)
     await call.answer()
 
@@ -139,33 +160,43 @@ async def cb_color_chosen(call: CallbackQuery, state: FSMContext, session: Async
     color = call.data.split(":", 1)[1]
     await update_watermark_color(session, call.from_user.id, color)
     await state.clear()
-    await call.answer(f"Цвет: {color}")
+    settings = await get_or_create_settings(session, call.from_user.id)
+    lang = get_lang(settings)
+    await call.answer(t("color_saved", lang, v=color))
     await _show_settings(call, session, call.from_user.id)
 
 
-# ─── Opacity ─────────────────────────────────────────────────────────────────
+# ─── Opacity ──────────────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "set_opacity")
-async def cb_set_opacity(call: CallbackQuery, state: FSMContext) -> None:
-    await call.message.edit_text("💧 Выберите прозрачность:", reply_markup=opacity_keyboard())
+async def cb_set_opacity(call: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    settings = await get_or_create_settings(session, call.from_user.id)
+    lang = get_lang(settings)
+    await call.message.edit_text(t("choose_opacity", lang), reply_markup=opacity_keyboard(lang))
     await state.set_state(WatermarkSettingsStates.choosing_opacity)
     await call.answer()
 
 
 @router.callback_query(WatermarkSettingsStates.choosing_opacity, F.data.startswith("opacity:"))
 async def cb_opacity_chosen(call: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
-    opacity_str = call.data.split(":", 1)[1]
-    await update_watermark_opacity(session, call.from_user.id, float(opacity_str))
+    pct_str = call.data.split(":", 1)[1]
+    await update_watermark_opacity(session, call.from_user.id, float(pct_str) / 100.0)
     await state.clear()
-    await call.answer(f"Прозрачность: {opacity_str}")
+    settings = await get_or_create_settings(session, call.from_user.id)
+    lang = get_lang(settings)
+    await call.answer(t("opacity_saved", lang, v=pct_str))
     await _show_settings(call, session, call.from_user.id)
 
 
-# ─── Position ────────────────────────────────────────────────────────────────
+# ─── Position ─────────────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "set_position")
-async def cb_set_position(call: CallbackQuery, state: FSMContext) -> None:
-    await call.message.edit_text("📍 Выберите позицию водяного знака:", reply_markup=position_keyboard("pos"))
+async def cb_set_position(call: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    settings = await get_or_create_settings(session, call.from_user.id)
+    lang = get_lang(settings)
+    await call.message.edit_text(
+        t("choose_position", lang), reply_markup=position_keyboard("pos", lang)
+    )
     await state.set_state(WatermarkSettingsStates.choosing_position)
     await call.answer()
 
@@ -175,20 +206,44 @@ async def cb_position_chosen(call: CallbackQuery, state: FSMContext, session: As
     position = call.data.split(":", 1)[1]
     await update_watermark_position(session, call.from_user.id, position)
     await state.clear()
-    label = POSITIONS.get(position, position)
-    await call.answer(f"Позиция: {label}")
+    settings = await get_or_create_settings(session, call.from_user.id)
+    lang = get_lang(settings)
+    await call.answer(t("position_saved", lang, v=pos_label(position, lang)))
     await _show_settings(call, session, call.from_user.id)
 
 
-# ─── Alternation ─────────────────────────────────────────────────────────────
+# ─── Language ─────────────────────────────────────────────────────────────────
+
+@router.callback_query(F.data == "set_language")
+async def cb_set_language(call: CallbackQuery, session: AsyncSession) -> None:
+    await call.message.edit_text(
+        t("choose_language", "ru"),  # bilingual prompt
+        reply_markup=language_keyboard(),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("lang:"))
+async def cb_lang_chosen(call: CallbackQuery, session: AsyncSession) -> None:
+    lang = call.data.split(":", 1)[1]
+    if lang not in ("ru", "en"):
+        await call.answer("?")
+        return
+    await update_language(session, call.from_user.id, lang)
+    settings = await get_or_create_settings(session, call.from_user.id)
+    await call.answer(t("language_saved", lang))
+    await _show_settings(call, session, call.from_user.id)
+
+
+# ─── Alternation ──────────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "set_alternation")
 async def cb_set_alternation(call: CallbackQuery, session: AsyncSession) -> None:
     settings = await get_or_create_settings(session, call.from_user.id)
+    lang = get_lang(settings)
     await call.message.edit_text(
-        "🔄 <b>Чередование позиций</b>\n\n"
-        "При включении водяной знак будет переключаться между несколькими позициями через заданный интервал.",
-        reply_markup=alternation_toggle_keyboard(settings.alternation_enabled),
+        t("alt_header", lang),
+        reply_markup=alternation_toggle_keyboard(settings.alternation_enabled, lang),
         parse_mode="HTML",
     )
     await call.answer()
@@ -197,99 +252,85 @@ async def cb_set_alternation(call: CallbackQuery, session: AsyncSession) -> None
 @router.callback_query(F.data == "alt_toggle")
 async def cb_alt_toggle(call: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     settings = await get_or_create_settings(session, call.from_user.id)
+    lang = get_lang(settings)
     if settings.alternation_enabled:
-        # Disable
         await update_alternation(session, call.from_user.id, False, 5, None)
-        await call.answer("Чередование выключено")
+        await call.answer(t("alt_disabled", lang))
         await _show_settings(call, session, call.from_user.id)
     else:
-        # Start setup flow
-        await call.message.edit_text(
-            "⏱ Введите интервал чередования в секундах.\n\n"
-            "Например: <code>5</code>\n\n"
-            "Введите <code>0</code> чтобы отключить.",
-            parse_mode="HTML",
-        )
+        await call.message.edit_text(t("enter_interval", lang), parse_mode="HTML")
         await state.set_state(WatermarkSettingsStates.waiting_for_interval)
         await call.answer()
 
 
-# ─── Delay ───────────────────────────────────────────────────────────────────
+# ─── Delay ────────────────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "set_delay")
-async def cb_set_delay(call: CallbackQuery, state: FSMContext) -> None:
-    await call.message.edit_text(
-        "⏱ <b>Задержка появления логотипа</b>\n\n"
-        "Введите через сколько секунд должен появиться водяной знак.\n\n"
-        "Примеры:\n"
-        "<code>0</code> — сразу (без задержки)\n"
-        "<code>5</code> — через 5 секунд\n"
-        "<code>10</code> — через 10 секунд",
-        parse_mode="HTML",
-    )
+async def cb_set_delay(call: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    settings = await get_or_create_settings(session, call.from_user.id)
+    lang = get_lang(settings)
+    await call.message.edit_text(t("delay_header", lang), parse_mode="HTML")
     await state.set_state(WatermarkSettingsStates.waiting_for_delay)
     await call.answer()
 
 
 @router.message(WatermarkSettingsStates.waiting_for_delay)
 async def msg_delay_received(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    settings = await get_or_create_settings(session, message.from_user.id)
+    lang = get_lang(settings)
     try:
         delay = int(message.text.strip())
     except ValueError:
-        await message.answer("⚠️ Введите целое число, например <code>5</code>.", parse_mode="HTML")
+        await message.answer(t("delay_bad", lang), parse_mode="HTML")
         return
-
     if delay < 0:
-        await message.answer("⚠️ Задержка не может быть отрицательной.")
+        await message.answer(t("delay_negative", lang))
         return
-
     await update_watermark_delay(session, message.from_user.id, delay)
     await state.clear()
-
-    label = f"{delay} сек." if delay else "нет (появляется сразу)"
+    label = t("delay_sec", lang, n=delay) if delay else t("delay_immediate", lang)
     settings = await get_or_create_settings(session, message.from_user.id)
     await message.answer(
-        f"✅ Задержка установлена: <b>{label}</b>",
+        t("delay_saved", lang, v=label),
         parse_mode="HTML",
-        reply_markup=settings_menu_keyboard(settings),
+        reply_markup=settings_menu_keyboard(settings, lang),
     )
 
 
-# ─── Alternation ─────────────────────────────────────────────────────────────
+# ─── Alternation setup flow ───────────────────────────────────────────────────
 
 @router.message(WatermarkSettingsStates.waiting_for_interval)
-async def msg_interval_received(message: Message, state: FSMContext) -> None:
+async def msg_interval_received(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    settings = await get_or_create_settings(session, message.from_user.id)
+    lang = get_lang(settings)
     try:
         interval = int(message.text.strip())
     except ValueError:
-        await message.answer("⚠️ Введите целое число.")
+        await message.answer(t("bad_interval", lang))
         return
-
     if interval == 0:
         await state.clear()
-        await message.answer("Чередование отключено.")
+        await message.answer(t("interval_zero", lang))
         return
-
     if interval < 1:
-        await message.answer("⚠️ Интервал должен быть не менее 1 секунды.")
+        await message.answer(t("bad_interval", lang))
         return
-
     await state.update_data(interval=interval, positions=[])
     await message.answer(
-        f"✅ Интервал: {interval} сек.\n\n📍 Выберите позицию 1:",
-        reply_markup=position_keyboard("altpos1"),
+        t("interval_set", lang, n=interval),
+        reply_markup=position_keyboard("altpos1", lang),
     )
     await state.set_state(WatermarkSettingsStates.choosing_alt_position_1)
 
 
 @router.callback_query(WatermarkSettingsStates.choosing_alt_position_1, F.data.startswith("altpos1:"))
-async def cb_alt_pos1_chosen(call: CallbackQuery, state: FSMContext) -> None:
+async def cb_alt_pos1_chosen(call: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    settings = await get_or_create_settings(session, call.from_user.id)
+    lang = get_lang(settings)
     pos = call.data.split(":", 1)[1]
     await state.update_data(alt_pos1=pos)
     await call.message.edit_text(
-        f"📍 Позиция 1: <b>{POSITIONS.get(pos, pos)}</b>\n\n"
-        "📐 Введите смещение <b>X Y</b> в пикселях.\n\n"
-        "Примеры:\n<code>0 0</code>\n<code>0 -50</code>\n<code>-30 0</code>",
+        t("choose_pos1", lang, pos=pos_label(pos, lang)),
         parse_mode="HTML",
     )
     await state.set_state(WatermarkSettingsStates.waiting_for_offset_1)
@@ -297,39 +338,39 @@ async def cb_alt_pos1_chosen(call: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.message(WatermarkSettingsStates.waiting_for_offset_1)
-async def msg_offset1_received(message: Message, state: FSMContext) -> None:
+async def msg_offset1_received(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    settings = await get_or_create_settings(session, message.from_user.id)
+    lang = get_lang(settings)
     parts = message.text.strip().split()
     if len(parts) != 2:
-        await message.answer("⚠️ Введите два числа через пробел, например: <code>0 0</code>", parse_mode="HTML")
+        await message.answer(t("bad_two_numbers", lang), parse_mode="HTML")
         return
     try:
         ox, oy = int(parts[0]), int(parts[1])
     except ValueError:
-        await message.answer("⚠️ Только целые числа.")
+        await message.answer(t("bad_integers", lang))
         return
-
     data = await state.get_data()
     pos1 = data.get("alt_pos1", "right_bottom")
     positions = data.get("positions", [])
     positions.append({"position": pos1, "offset_x": ox, "offset_y": oy})
     await state.update_data(positions=positions)
-
     await message.answer(
-        f"✅ Позиция 1 сохранена: <b>{POSITIONS.get(pos1, pos1)}</b> ({ox:+d}, {oy:+d})\n\n"
-        "📍 Выберите позицию 2:",
+        t("pos1_saved", lang, pos=pos_label(pos1, lang), ox=ox, oy=oy),
         parse_mode="HTML",
-        reply_markup=position_keyboard("altpos2"),
+        reply_markup=position_keyboard("altpos2", lang),
     )
     await state.set_state(WatermarkSettingsStates.choosing_alt_position_2)
 
 
 @router.callback_query(WatermarkSettingsStates.choosing_alt_position_2, F.data.startswith("altpos2:"))
-async def cb_alt_pos2_chosen(call: CallbackQuery, state: FSMContext) -> None:
+async def cb_alt_pos2_chosen(call: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    settings = await get_or_create_settings(session, call.from_user.id)
+    lang = get_lang(settings)
     pos = call.data.split(":", 1)[1]
     await state.update_data(alt_pos2=pos)
     await call.message.edit_text(
-        f"📍 Позиция 2: <b>{POSITIONS.get(pos, pos)}</b>\n\n"
-        "📐 Введите смещение <b>X Y</b> в пикселях.",
+        t("choose_pos2", lang, pos=pos_label(pos, lang)),
         parse_mode="HTML",
     )
     await state.set_state(WatermarkSettingsStates.waiting_for_offset_2)
@@ -338,35 +379,30 @@ async def cb_alt_pos2_chosen(call: CallbackQuery, state: FSMContext) -> None:
 
 @router.message(WatermarkSettingsStates.waiting_for_offset_2)
 async def msg_offset2_received(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    settings = await get_or_create_settings(session, message.from_user.id)
+    lang = get_lang(settings)
     parts = message.text.strip().split()
     if len(parts) != 2:
-        await message.answer("⚠️ Введите два числа через пробел, например: <code>0 0</code>", parse_mode="HTML")
+        await message.answer(t("bad_two_numbers", lang), parse_mode="HTML")
         return
     try:
         ox, oy = int(parts[0]), int(parts[1])
     except ValueError:
-        await message.answer("⚠️ Только целые числа.")
+        await message.answer(t("bad_integers", lang))
         return
-
     data = await state.get_data()
     pos2 = data.get("alt_pos2", "left_center")
     interval = data.get("interval", 5)
     positions = data.get("positions", [])
     positions.append({"position": pos2, "offset_x": ox, "offset_y": oy})
-
     alt_json = {"enabled": True, "interval": interval, "positions": positions}
     await update_alternation(session, message.from_user.id, True, interval, alt_json)
     await state.clear()
-
-    pos1_label = POSITIONS.get(positions[0]["position"], positions[0]["position"])
-    pos2_label = POSITIONS.get(positions[1]["position"], positions[1]["position"])
-
+    p1 = pos_label(positions[0]["position"], lang)
+    p2 = pos_label(positions[1]["position"], lang)
     settings = await get_or_create_settings(session, message.from_user.id)
     await message.answer(
-        f"✅ <b>Чередование настроено!</b>\n\n"
-        f"⏱ Интервал: <b>{interval} сек.</b>\n"
-        f"📍 Позиция 1: <b>{pos1_label}</b>\n"
-        f"📍 Позиция 2: <b>{pos2_label}</b>",
+        t("alt_configured", lang, n=interval, p1=p1, p2=p2),
         parse_mode="HTML",
-        reply_markup=settings_menu_keyboard(settings),
+        reply_markup=settings_menu_keyboard(settings, lang),
     )

@@ -1,12 +1,13 @@
 import logging
 from aiogram import Router, F
-from aiogram.filters import CommandStart, Command
+from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.database import upsert_user, get_user_jobs
+from bot.database import upsert_user, get_user_jobs, get_or_create_settings
+from bot.database.queries import get_lang
 from bot.keyboards import main_menu_keyboard
-from bot.config import POSITIONS
+from bot.i18n import t
 
 logger = logging.getLogger(__name__)
 router = Router(name="start")
@@ -18,33 +19,29 @@ async def _register_user(message: Message, session: AsyncSession) -> None:
         session=session,
         user_id=user.id,
         username=user.username,
-        first_name=user.first_name or "Без имени",
+        first_name=user.first_name or "—",
     )
 
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, session: AsyncSession) -> None:
     await _register_user(message, session)
+    settings = await get_or_create_settings(session, message.from_user.id)
+    lang = get_lang(settings)
     await message.answer(
-        f"👋 Привет, <b>{message.from_user.first_name}</b>!\n\n"
-        "Я помогу добавить текстовый водяной знак на ваше видео.\n"
-        "Выберите действие:",
-        reply_markup=main_menu_keyboard(),
+        t("welcome", lang, name=message.from_user.first_name),
+        reply_markup=main_menu_keyboard(lang),
         parse_mode="HTML",
     )
 
 
 @router.callback_query(F.data == "help")
-async def cb_help(call: CallbackQuery) -> None:
+async def cb_help(call: CallbackQuery, session: AsyncSession) -> None:
+    settings = await get_or_create_settings(session, call.from_user.id)
+    lang = get_lang(settings)
     await call.message.edit_text(
-        "ℹ️ <b>Как пользоваться ботом:</b>\n\n"
-        "1️⃣ Откройте <b>⚙️ Настройки водяного знака</b> и задайте текст, шрифт, цвет, позицию.\n"
-        "2️⃣ Нажмите <b>🎥 Добавить видео</b> и отправьте файл.\n"
-        "3️⃣ Бот обработает видео и вернёт вам результат.\n\n"
-        "<b>Поддерживаемые форматы:</b> mp4, mov, mkv, avi, webm\n"
-        "<b>Максимальный размер:</b> до 2 ГБ\n\n"
-        "📂 В разделе <b>Мои задачи</b> можно посмотреть историю обработок.",
-        reply_markup=main_menu_keyboard(),
+        t("help_text", lang),
+        reply_markup=main_menu_keyboard(lang),
         parse_mode="HTML",
     )
     await call.answer()
@@ -52,45 +49,49 @@ async def cb_help(call: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "my_jobs")
 async def cb_my_jobs(call: CallbackQuery, session: AsyncSession) -> None:
+    settings = await get_or_create_settings(session, call.from_user.id)
+    lang = get_lang(settings)
     jobs = await get_user_jobs(session, call.from_user.id)
 
     if not jobs:
         await call.message.edit_text(
-            "📂 <b>Мои задачи</b>\n\nУ вас пока нет обработанных видео.",
-            reply_markup=main_menu_keyboard(),
+            t("no_jobs", lang),
+            reply_markup=main_menu_keyboard(lang),
             parse_mode="HTML",
         )
         await call.answer()
         return
 
-    STATUS_EMOJI = {
-        "pending": "⏳",
-        "downloading": "📥",
-        "processing": "⚙️",
-        "uploading": "📤",
-        "done": "✅",
-        "failed": "❌",
+    STATUS_KEY = {
+        "pending":     "job_status_pending",
+        "downloading": "job_status_downloading",
+        "processing":  "job_status_processing",
+        "uploading":   "job_status_uploading",
+        "done":        "job_status_done",
+        "failed":      "job_status_failed",
     }
 
-    lines = ["📂 <b>Мои задачи (последние 10):</b>\n"]
+    lines = [t("jobs_header", lang)]
     for job in jobs:
-        emoji = STATUS_EMOJI.get(job.status, "❓")
+        emoji = t(STATUS_KEY.get(job.status, "job_status_failed"), lang)
         date_str = job.created_at.strftime("%d.%m.%Y %H:%M")
-        name = job.original_filename or f"Задача #{job.id}"
-        lines.append(f"{emoji} <b>#{job.id}</b> — {name}\n   📅 {date_str} | Статус: {job.status}")
+        name = job.original_filename or f"#{job.id}"
+        lines.append(f"{emoji} <b>#{job.id}</b> — {name}\n   📅 {date_str} | {job.status}")
 
     await call.message.edit_text(
         "\n".join(lines),
-        reply_markup=main_menu_keyboard(),
+        reply_markup=main_menu_keyboard(lang),
         parse_mode="HTML",
     )
     await call.answer()
 
 
 @router.callback_query(F.data == "settings_done")
-async def cb_settings_done(call: CallbackQuery) -> None:
+async def cb_settings_done(call: CallbackQuery, session: AsyncSession) -> None:
+    settings = await get_or_create_settings(session, call.from_user.id)
+    lang = get_lang(settings)
     await call.message.edit_text(
-        "✅ Настройки сохранены!\n\nТеперь отправьте видео для обработки.",
-        reply_markup=main_menu_keyboard(),
+        t("settings_done_msg", lang),
+        reply_markup=main_menu_keyboard(lang),
     )
-    await call.answer("Настройки сохранены!")
+    await call.answer(t("settings_done_toast", lang))

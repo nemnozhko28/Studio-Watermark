@@ -2,7 +2,7 @@ import logging
 from datetime import datetime
 from typing import Optional, List
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -17,7 +17,6 @@ async def upsert_user(
     username: Optional[str],
     first_name: str,
 ) -> None:
-    """Create or update user record."""
     stmt = (
         pg_insert(User)
         .values(user_id=user_id, username=username, first_name=first_name)
@@ -30,7 +29,6 @@ async def upsert_user(
         await session.execute(stmt)
         await session.commit()
     except Exception:
-        # Fallback to SQLite upsert
         await session.rollback()
         existing = await session.get(User, user_id)
         if existing:
@@ -44,14 +42,12 @@ async def upsert_user(
 async def get_watermark_settings(
     session: AsyncSession, user_id: int
 ) -> Optional[WatermarkSettings]:
-    """Fetch watermark settings for a user."""
     return await session.get(WatermarkSettings, user_id)
 
 
 async def get_or_create_settings(
     session: AsyncSession, user_id: int
 ) -> WatermarkSettings:
-    """Get existing settings or create defaults."""
     settings = await session.get(WatermarkSettings, user_id)
     if not settings:
         settings = WatermarkSettings(user_id=user_id)
@@ -61,59 +57,51 @@ async def get_or_create_settings(
     return settings
 
 
-async def update_watermark_text(
-    session: AsyncSession, user_id: int, text: str
-) -> None:
-    settings = await get_or_create_settings(session, user_id)
-    settings.text = text
+def get_lang(settings: WatermarkSettings) -> str:
+    """Return language code from settings, defaulting to 'ru'."""
+    lang = getattr(settings, "language", None) or "ru"
+    return lang if lang in ("ru", "en") else "ru"
+
+
+async def update_watermark_text(session: AsyncSession, user_id: int, text: str) -> None:
+    s = await get_or_create_settings(session, user_id)
+    s.text = text
     await session.commit()
 
 
-async def update_watermark_font(
-    session: AsyncSession, user_id: int, font: str
-) -> None:
-    settings = await get_or_create_settings(session, user_id)
-    settings.font = font
+async def update_watermark_font(session: AsyncSession, user_id: int, font: str) -> None:
+    s = await get_or_create_settings(session, user_id)
+    s.font = font
     await session.commit()
 
 
-async def update_watermark_size(
-    session: AsyncSession, user_id: int, size: str
-) -> None:
-    settings = await get_or_create_settings(session, user_id)
-    settings.size = size
+async def update_watermark_size(session: AsyncSession, user_id: int, size: str) -> None:
+    s = await get_or_create_settings(session, user_id)
+    s.size = size
     await session.commit()
 
 
-async def update_watermark_color(
-    session: AsyncSession, user_id: int, color: str
-) -> None:
-    settings = await get_or_create_settings(session, user_id)
-    settings.color = color
+async def update_watermark_color(session: AsyncSession, user_id: int, color: str) -> None:
+    s = await get_or_create_settings(session, user_id)
+    s.color = color
     await session.commit()
 
 
-async def update_watermark_opacity(
-    session: AsyncSession, user_id: int, opacity: float
-) -> None:
-    settings = await get_or_create_settings(session, user_id)
-    settings.opacity = opacity
+async def update_watermark_opacity(session: AsyncSession, user_id: int, opacity: float) -> None:
+    s = await get_or_create_settings(session, user_id)
+    s.opacity = opacity
     await session.commit()
 
 
-async def update_watermark_position(
-    session: AsyncSession, user_id: int, position: str
-) -> None:
-    settings = await get_or_create_settings(session, user_id)
-    settings.position = position
+async def update_watermark_position(session: AsyncSession, user_id: int, position: str) -> None:
+    s = await get_or_create_settings(session, user_id)
+    s.position = position
     await session.commit()
 
 
-async def update_watermark_delay(
-    session: AsyncSession, user_id: int, delay_seconds: int
-) -> None:
-    settings = await get_or_create_settings(session, user_id)
-    settings.delay_seconds = delay_seconds
+async def update_watermark_delay(session: AsyncSession, user_id: int, delay_seconds: int) -> None:
+    s = await get_or_create_settings(session, user_id)
+    s.delay_seconds = delay_seconds
     await session.commit()
 
 
@@ -124,10 +112,16 @@ async def update_alternation(
     interval: int,
     alternation_data: Optional[dict],
 ) -> None:
-    settings = await get_or_create_settings(session, user_id)
-    settings.alternation_enabled = enabled
-    settings.alternation_interval = interval
-    settings.alternation_json = alternation_data
+    s = await get_or_create_settings(session, user_id)
+    s.alternation_enabled = enabled
+    s.alternation_interval = interval
+    s.alternation_json = alternation_data
+    await session.commit()
+
+
+async def update_language(session: AsyncSession, user_id: int, lang: str) -> None:
+    s = await get_or_create_settings(session, user_id)
+    s.language = lang
     await session.commit()
 
 

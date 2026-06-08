@@ -22,8 +22,8 @@ class WatermarkSettings(Base):
 
     user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     text: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
-    font: Mapped[str] = mapped_column(String(100), default="Montserrat-Bold")
-    size: Mapped[str] = mapped_column(String(10), default="6%")
+    font: Mapped[str] = mapped_column(String(100), default="Montserrat Bold")
+    size: Mapped[str] = mapped_column(String(10), default="20")
     color: Mapped[str] = mapped_column(String(50), default="white")
     opacity: Mapped[float] = mapped_column(Float, default=0.8)
     position: Mapped[str] = mapped_column(String(50), default="right_bottom")
@@ -31,6 +31,7 @@ class WatermarkSettings(Base):
     alternation_interval: Mapped[int] = mapped_column(Integer, default=5)
     alternation_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     delay_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    language: Mapped[str] = mapped_column(String(5), default="ru", server_default="ru")
 
 
 class Job(Base):
@@ -40,7 +41,6 @@ class Job(Base):
     user_id: Mapped[int] = mapped_column(BigInteger)
     file_id: Mapped[str] = mapped_column(String(500))
     original_filename: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
-    # Source message coordinates — required for Telethon MTProto download
     source_chat_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     source_message_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="pending")
