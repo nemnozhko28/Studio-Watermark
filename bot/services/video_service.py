@@ -130,72 +130,54 @@ async def forward_original_to_admin(
     height: int = 0,
     duration: int = 0,
 ) -> None:
-    """Send original to admin channel — исправленная версия для больших файлов"""
-    from aiogram import Bot
-    from aiogram.enums import ParseMode
-    from aiogram.types import FSInputFile
+    """Отправка оригинала в канал через Pyrogram (лучше работает с большими видео)"""
+    client = await get_pyrogram_client()
 
     size_str = _human_size(file_size)
-    fmt = Path(original_filename).suffix.lstrip(".").upper() or mime_type
 
     caption = (
         "🆕 <b>Новый файл</b>\n\n"
         f"👤 <b>ID пользователя:</b> <code>{user_id}</code>\n"
-        f"🔗 <b>USERNAME:</b> @{username or 'нет'}\n"
-        f"📛 <b>Имя:</b> {first_name}\n\n"
+        f"👤 <b>Имя:</b> {first_name}\n"
+        f"🔗 <b>Username:</b> @{username or 'нет'}\n\n"
         f"📦 <b>Размер:</b> {size_str}\n"
-        f"🎞 <b>Формат:</b> {fmt}\n"
-        f"📄 Имя: <code>{original_filename}</code>"
+        f"📄 <b>Имя:</b> <code>{original_filename}</code>"
     )
 
     admin_channel = config.admin_channel_id
-    logger.info(f"Forwarding original ({size_str}) to admin channel via aiogram")
+    logger.info(f"Forwarding original ({size_str}) to admin channel via Pyrogram")
 
-    bot = None
     try:
-        bot = Bot(token=config.bot_token)
-        input_file = FSInputFile(original_path, filename=original_filename)
+        # Прогреваем канал
+        await client.get_chat(admin_channel)
 
-        # Для надёжности отправляем ВСЕ файлы как document, если > 20 МБ
-        if file_size > 20 * 1024 * 1024:
-            await bot.send_document(
-                chat_id=admin_channel,
-                document=input_file,
-                caption=caption,
-                parse_mode=ParseMode.HTML,
-            )
-        else:
-            await bot.send_video(
-                chat_id=admin_channel,
-                video=input_file,
-                caption=caption,
-                supports_streaming=True,
-                width=width or None,
-                height=height or None,
-                duration=duration or None,
-                parse_mode=ParseMode.HTML,
-            )
+        await client.send_video(
+            chat_id=admin_channel,
+            video=original_path,
+            caption=caption,
+            supports_streaming=True,
+            width=width or None,
+            height=height or None,
+            duration=duration or None,
+            parse_mode="HTML",
+        )
 
-        logger.info(f"✅ Successfully forwarded original to admin channel")
+        logger.info(f"✅ Successfully forwarded original video to admin channel")
 
     except Exception as e:
-        logger.error(f"Admin channel forward failed: {e}", exc_info=True)
+        logger.error(f"Pyrogram forward failed: {e}", exc_info=True)
+        
+        # Fallback: отправляем как документ
         try:
-            if bot:
-                await bot.send_message(
-                    config.admin_id,
-                    f"⚠️ Ошибка отправки в канал:\n<code>{str(e)[:500]}</code>\n\n"
-                    f"Размер файла: {size_str}",
-                    parse_mode=ParseMode.HTML,
-                )
-        except:
-            pass
-    finally:
-        if bot:
-            try:
-                await bot.session.close()
-            except:
-                pass
+            await client.send_document(
+                chat_id=admin_channel,
+                document=original_path,
+                caption=caption + "\n\n<i>(отправлено как документ — большой размер)</i>",
+                parse_mode="HTML",
+            )
+            logger.info("✅ Fallback: sent as document")
+        except Exception as e2:
+            logger.error(f"Fallback also failed: {e2}")
 
 
 def _human_size(size_bytes: int) -> str:
