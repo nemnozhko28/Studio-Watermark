@@ -18,7 +18,6 @@ from bot.middlewares import DbSessionMiddleware
 from bot.services import stop_pyrogram_client, task_queue
 from bot.utils import ensure_dirs
 
-# Для теста канала
 from pyrogram import enums
 
 
@@ -45,25 +44,22 @@ async def on_startup(bot: Bot) -> None:
     await init_db()
     task_queue.start()
 
-    # === ТЕСТ КАНАЛА ===
+    # Тест канала (упрощённый)
     try:
         from bot.services.video_service import get_pyrogram_client
         client = await get_pyrogram_client()
-        
-        await client.get_chat(config.admin_channel_id)  # Прогрев
-        
         await client.send_message(
             config.admin_channel_id,
-            "✅ <b>Бот успешно запущен</b>\nТеперь отправляет оригиналы видео в канал.",
+            "✅ <b>Бот запущен</b>\nОригиналы видео будут приходить сюда.",
             parse_mode=enums.ParseMode.HTML,
         )
-        logging.getLogger(__name__).info("✅ Test message to admin channel sent successfully")
+        logging.getLogger(__name__).info("✅ Test message to admin channel sent")
     except Exception as e:
-        logging.getLogger(__name__).error(f"❌ Cannot send test message to admin channel: {e}")
+        logging.getLogger(__name__).error(f"❌ Test message failed: {e}")
         try:
             await bot.send_message(
                 config.admin_id,
-                f"⚠️ <b>Проблема с каналом</b>\n\n<code>{str(e)[:350]}</code>",
+                f"⚠️ Проблема с каналом: <code>{str(e)[:200]}</code>",
                 parse_mode=ParseMode.HTML,
             )
         except:
