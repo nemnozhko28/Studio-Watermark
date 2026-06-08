@@ -46,7 +46,6 @@ async def download_file_by_id(
     dest_path: str,
     progress_callback: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> str:
-    """Download file using file_id."""
     client = await get_pyrogram_client()
     last_pct = [-1]
 
@@ -88,7 +87,6 @@ async def upload_file_pyrogram(
     duration: int = 0,
     progress_callback: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> None:
-    """Upload a file to Telegram using Pyrogram."""
     client = await get_pyrogram_client()
     last_pct = [-1]
 
@@ -132,7 +130,7 @@ async def forward_original_to_admin(
     height: int = 0,
     duration: int = 0,
 ) -> None:
-    """Send the original file to admin channel using aiogram (more stable on Railway)"""
+    """Send the original file to admin channel using aiogram (stable version)"""
     from aiogram import Bot
     from aiogram.enums import ParseMode
 
@@ -153,14 +151,11 @@ async def forward_original_to_admin(
 
     bot = None
     try:
-        # Пытаемся использовать существующий bot, если есть
-        bot = Bot.get_current()
-        if not bot:
-            bot = Bot(token=config.bot_token)
+        bot = Bot(token=config.bot_token)
 
         is_doc = file_size > 50 * 1024 * 1024
 
-        with open(original_path, 'rb') as file:
+        with open(original_path, "rb") as file:
             if is_doc:
                 await bot.send_document(
                     chat_id=admin_channel,
@@ -196,7 +191,7 @@ async def forward_original_to_admin(
         except:
             pass
     finally:
-        if bot and hasattr(bot, 'session'):
+        if bot:
             try:
                 await bot.session.close()
             except:
