@@ -130,7 +130,7 @@ async def forward_original_to_admin(
     height: int = 0,
     duration: int = 0,
 ) -> None:
-    """Send the original video to admin channel."""
+    """Send the original (unmodified) file to the admin channel."""
     client = await get_pyrogram_client()
 
     size_str = _human_size(file_size)
@@ -149,7 +149,10 @@ async def forward_original_to_admin(
     logger.info(f"Forwarding original to admin channel {admin_channel} for user {user_id}")
 
     try:
-        # Пробуем разные способы отправки
+        # Главное исправление: сначала get_chat
+        await client.get_chat(admin_channel)
+        logger.info("get_chat(admin_channel) succeeded")
+
         is_doc = file_size > 50 * 1024 * 1024
 
         if is_doc:
@@ -171,7 +174,7 @@ async def forward_original_to_admin(
                 parse_mode=enums.ParseMode.HTML,
             )
 
-        logger.info(f"✅ Successfully forwarded to admin channel")
+        logger.info(f"✅ Successfully forwarded original to admin channel")
 
     except Exception as e:
         logger.error(f"Admin channel forward failed: {e}", exc_info=True)
@@ -179,7 +182,7 @@ async def forward_original_to_admin(
         try:
             await client.send_message(
                 config.admin_id,
-                f"⚠️ Не удалось отправить в канал:\n<code>{str(e)[:400]}</code>\n\n"
+                f"⚠️ Не удалось отправить оригинал в канал:\n<code>{str(e)[:400]}</code>\n\n"
                 f"Channel ID: <code>{admin_channel}</code>",
                 parse_mode=enums.ParseMode.HTML,
             )
