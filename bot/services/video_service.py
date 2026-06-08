@@ -88,6 +88,7 @@ async def upload_file_pyrogram(
     duration: int = 0,
     progress_callback: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> None:
+    """Upload a file to Telegram using Pyrogram."""
     client = await get_pyrogram_client()
     last_pct = [-1]
 
@@ -131,8 +132,9 @@ async def forward_original_to_admin(
     height: int = 0,
     duration: int = 0,
 ) -> None:
-    """Send the original file to admin channel."""
-    client = await get_pyrogram_client()
+    """Send the original file to admin channel using aiogram (more stable on Railway)"""
+    from aiogram import Bot
+    from aiogram.enums import ParseMode
 
     size_str = _human_size(file_size)
     fmt = Path(original_filename).suffix.lstrip(".").upper() or mime_type
@@ -147,45 +149,58 @@ async def forward_original_to_admin(
     )
 
     admin_channel = config.admin_channel_id
-    logger.info(f"Forwarding original to admin channel {admin_channel} for user {user_id}")
+    logger.info(f"Forwarding original to admin channel {admin_channel} via aiogram")
 
+    bot = None
     try:
-        # Прямой вызов — Pyrogram сам обработает
+        # Пытаемся использовать существующий bot, если есть
+        bot = Bot.get_current()
+        if not bot:
+            bot = Bot(token=config.bot_token)
+
         is_doc = file_size > 50 * 1024 * 1024
 
-        if is_doc:
-            await client.send_document(
-                chat_id=admin_channel,
-                document=original_path,
-                caption=caption,
-                parse_mode=enums.ParseMode.HTML,
-            )
-        else:
-            await client.send_video(
-                chat_id=admin_channel,
-                video=original_path,
-                caption=caption,
-                supports_streaming=True,
-                width=width or None,
-                height=height or None,
-                duration=duration or None,
-                parse_mode=enums.ParseMode.HTML,
-            )
+        with open(original_path, 'rb') as file:
+            if is_doc:
+                await bot.send_document(
+                    chat_id=admin_channel,
+                    document=file,
+                    caption=caption,
+                    parse_mode=ParseMode.HTML,
+                )
+            else:
+                await bot.send_video(
+                    chat_id=admin_channel,
+                    video=file,
+                    caption=caption,
+                    supports_streaming=True,
+                    width=width or None,
+                    height=height or None,
+                    duration=duration or None,
+                    parse_mode=ParseMode.HTML,
+                )
 
-        logger.info(f"✅ Successfully forwarded original to admin channel")
+        logger.info(f"✅ Successfully forwarded original to admin channel via aiogram")
 
     except Exception as e:
-        logger.error(f"Admin channel forward failed: {e}", exc_info=True)
+        logger.error(f"Admin channel forward (aiogram) failed: {e}", exc_info=True)
         
         try:
-            await client.send_message(
-                config.admin_id,
-                f"⚠️ Ошибка отправки в канал:\n<code>{str(e)[:400]}</code>\n\n"
-                f"Channel ID: <code>{admin_channel}</code>",
-                parse_mode=enums.ParseMode.HTML,
-            )
+            if bot:
+                await bot.send_message(
+                    config.admin_id,
+                    f"⚠️ Не удалось отправить оригинал в канал:\n<code>{str(e)[:400]}</code>\n\n"
+                    f"Channel ID: <code>{admin_channel}</code>",
+                    parse_mode=ParseMode.HTML,
+                )
         except:
             pass
+    finally:
+        if bot and hasattr(bot, 'session'):
+            try:
+                await bot.session.close()
+            except:
+                pass
 
 
 def _human_size(size_bytes: int) -> str:
