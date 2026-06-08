@@ -13,6 +13,7 @@ from bot.database import (
     update_watermark_opacity,
     update_watermark_position,
     update_alternation,
+    update_watermark_delay,
 )
 from bot.keyboards import (
     settings_menu_keyboard,
@@ -35,6 +36,9 @@ async def _show_settings(target, session: AsyncSession, user_id: int, edit: bool
     pos_label = POSITIONS.get(settings.position, settings.position)
     alt_label = "вкл" if settings.alternation_enabled else "выкл"
 
+    delay = getattr(settings, "delay_seconds", 0)
+    delay_label = f"{delay} сек." if delay else "нет"
+
     text = (
         "⚙️ <b>Настройки водяного знака</b>\n\n"
         f"✏️ Текст логотипа: <b>{settings.text or '(не задан)'}</b>\n"
@@ -43,7 +47,8 @@ async def _show_settings(target, session: AsyncSession, user_id: int, edit: bool
         f"🎨 Цвет: <b>{settings.color}</b>\n"
         f"💧 Прозрачность: <b>{settings.opacity}</b>\n"
         f"📍 Позиция: <b>{pos_label}</b>\n"
-        f"🔄 Чередование: <b>{alt_label}</b>"
+        f"🔄 Чередование: <b>{alt_label}</b>\n"
+        f"⏱ Задержка: <b>{delay_label}</b>"
     )
 
     if edit:
@@ -208,6 +213,49 @@ async def cb_alt_toggle(call: CallbackQuery, state: FSMContext, session: AsyncSe
         await state.set_state(WatermarkSettingsStates.waiting_for_interval)
         await call.answer()
 
+
+# ─── Delay ───────────────────────────────────────────────────────────────────
+
+@router.callback_query(F.data == "set_delay")
+async def cb_set_delay(call: CallbackQuery, state: FSMContext) -> None:
+    await call.message.edit_text(
+        "⏱ <b>Задержка появления логотипа</b>\n\n"
+        "Введите через сколько секунд должен появиться водяной знак.\n\n"
+        "Примеры:\n"
+        "<code>0</code> — сразу (без задержки)\n"
+        "<code>5</code> — через 5 секунд\n"
+        "<code>10</code> — через 10 секунд",
+        parse_mode="HTML",
+    )
+    await state.set_state(WatermarkSettingsStates.waiting_for_delay)
+    await call.answer()
+
+
+@router.message(WatermarkSettingsStates.waiting_for_delay)
+async def msg_delay_received(message: Message, state: FSMContext, session: AsyncSession) -> None:
+    try:
+        delay = int(message.text.strip())
+    except ValueError:
+        await message.answer("⚠️ Введите целое число, например <code>5</code>.", parse_mode="HTML")
+        return
+
+    if delay < 0:
+        await message.answer("⚠️ Задержка не может быть отрицательной.")
+        return
+
+    await update_watermark_delay(session, message.from_user.id, delay)
+    await state.clear()
+
+    label = f"{delay} сек." if delay else "нет (появляется сразу)"
+    settings = await get_or_create_settings(session, message.from_user.id)
+    await message.answer(
+        f"✅ Задержка установлена: <b>{label}</b>",
+        parse_mode="HTML",
+        reply_markup=settings_menu_keyboard(settings),
+    )
+
+
+# ─── Alternation ─────────────────────────────────────────────────────────────
 
 @router.message(WatermarkSettingsStates.waiting_for_interval)
 async def msg_interval_received(message: Message, state: FSMContext) -> None:

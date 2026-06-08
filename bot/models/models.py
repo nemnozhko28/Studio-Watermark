@@ -30,6 +30,7 @@ class WatermarkSettings(Base):
     alternation_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     alternation_interval: Mapped[int] = mapped_column(Integer, default=5)
     alternation_json: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    delay_seconds: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class Job(Base):

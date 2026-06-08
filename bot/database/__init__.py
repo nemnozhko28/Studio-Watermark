@@ -9,6 +9,7 @@ from .queries import (
     update_watermark_color,
     update_watermark_opacity,
     update_watermark_position,
+    update_watermark_delay,
     update_alternation,
     create_job,
     update_job_status,

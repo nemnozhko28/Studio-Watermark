@@ -85,6 +85,10 @@ def build_watermark_filter(settings) -> str:
     color = settings.color
     opacity = float(settings.opacity)
 
+    delay = int(getattr(settings, "delay_seconds", 0))
+    # Base enable: show only after delay seconds
+    base_enable = f"gte(t,{delay})" if delay > 0 else "1"
+
     if not settings.alternation_enabled or not settings.alternation_json:
         # Simple single-position watermark
         drawtext = _build_drawtext_filter(
@@ -94,6 +98,7 @@ def build_watermark_filter(settings) -> str:
             color=color,
             opacity=opacity,
             position=settings.position,
+            enable_expr=base_enable,
         )
         return drawtext
 
@@ -103,7 +108,6 @@ def build_watermark_filter(settings) -> str:
     positions = alt_data.get("positions", [])
 
     if not positions:
-        # Fallback to single position
         drawtext = _build_drawtext_filter(
             text=text,
             font_path=font_path,
@@ -111,19 +115,24 @@ def build_watermark_filter(settings) -> str:
             color=color,
             opacity=opacity,
             position=settings.position,
+            enable_expr=base_enable,
         )
         return drawtext
 
     drawtext_filters = []
+    n = len(positions)
     for i, pos_data in enumerate(positions):
         pos_key = pos_data.get("position", "right_bottom")
         ox = int(pos_data.get("offset_x", 0))
         oy = int(pos_data.get("offset_y", 0))
 
-        # Time windows: position i is active during [i*interval, (i+1)*interval), repeating
-        # Using modulo: floor(t/interval) % n_positions == i
-        n = len(positions)
-        enable_expr = f"eq(mod(floor(t/{interval}),{n}),{i})"
+        # After delay: alternate positions by time slot
+        if delay > 0:
+            # Time since delay started, divided into slots
+            alt_expr = f"eq(mod(floor((t-{delay})/{interval}),{n}),{i})"
+            enable_expr = f"gte(t,{delay})*{alt_expr}"
+        else:
+            enable_expr = f"eq(mod(floor(t/{interval}),{n}),{i})"
 
         dt = _build_drawtext_filter(
             text=text,
@@ -138,7 +147,6 @@ def build_watermark_filter(settings) -> str:
         )
         drawtext_filters.append(dt)
 
-    # Chain multiple drawtext filters
     return ",".join(drawtext_filters)
 
 

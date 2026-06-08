@@ -111,6 +111,14 @@ async def update_watermark_position(
     await session.commit()
 
 
+async def update_watermark_delay(
+    session: AsyncSession, user_id: int, delay_seconds: int
+) -> None:
+    settings = await get_or_create_settings(session, user_id)
+    settings.delay_seconds = delay_seconds
+    await session.commit()
+
+
 async def update_alternation(
     session: AsyncSession,
     user_id: int,

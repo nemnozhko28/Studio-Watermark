@@ -9,6 +9,9 @@ class WatermarkSettingsStates(StatesGroup):
     choosing_opacity = State()
     choosing_position = State()
 
+    # Delay flow
+    waiting_for_delay = State()
+
     # Alternation flow
     waiting_for_interval = State()
     choosing_alt_position_1 = State()

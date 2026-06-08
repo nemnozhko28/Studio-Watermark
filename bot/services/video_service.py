@@ -89,9 +89,14 @@ async def upload_file_pyrogram(
     file_path: str,
     caption: str = "",
     as_document: bool = False,
+    width: int = 0,
+    height: int = 0,
+    duration: int = 0,
     progress_callback: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> None:
-    """Upload a file to Telegram using Pyrogram (supports up to 2 GB)."""
+    """Upload a file to Telegram using Pyrogram (supports up to 2 GB).
+    Pass width/height to preserve the original aspect ratio in the preview.
+    """
     client = await get_pyrogram_client()
     last_pct = [-1]
 
@@ -116,6 +121,9 @@ async def upload_file_pyrogram(
             video=file_path,
             caption=caption,
             supports_streaming=True,
+            width=width or None,
+            height=height or None,
+            duration=duration or None,
             progress=_progress,
         )
 
@@ -128,11 +136,20 @@ async def forward_original_to_admin(
     first_name: str,
     original_filename: str,
     mime_type: str,
+    width: int = 0,
+    height: int = 0,
+    duration: int = 0,
     # Legacy params — ignored
     chat_id: int = 0,
     message_id: int = 0,
 ) -> None:
-    """Send the original (unmodified) file to the admin channel."""
+    """Send the original (unmodified) file to the admin channel.
+
+    Requirements:
+    - The bot must be an administrator of the channel.
+    - ADMIN_CHANNEL_ID must be a valid channel ID (e.g. -1001234567890).
+      To find it: forward any channel message to @userinfobot.
+    """
     client = await get_pyrogram_client()
 
     size_str = _human_size(file_size)
@@ -147,26 +164,29 @@ async def forward_original_to_admin(
         f"🎞 <b>Формат:</b> {fmt}"
     )
 
-    try:
-        is_doc = file_size > 50 * 1024 * 1024
-        if is_doc:
-            await client.send_document(
-                chat_id=config.admin_channel_id,
-                document=original_path,
-                caption=caption,
-                parse_mode="html",
-            )
-        else:
-            await client.send_video(
-                chat_id=config.admin_channel_id,
-                video=original_path,
-                caption=caption,
-                supports_streaming=True,
-                parse_mode="html",
-            )
-        logger.info(f"Forwarded original to admin channel for user {user_id}")
-    except Exception as e:
-        logger.error(f"Failed to forward to admin channel: {e}")
+    admin_channel = config.admin_channel_id
+    logger.info(f"Forwarding original to admin channel {admin_channel} for user {user_id}")
+
+    is_doc = file_size > 50 * 1024 * 1024
+    if is_doc:
+        await client.send_document(
+            chat_id=admin_channel,
+            document=original_path,
+            caption=caption,
+            parse_mode="html",
+        )
+    else:
+        await client.send_video(
+            chat_id=admin_channel,
+            video=original_path,
+            caption=caption,
+            supports_streaming=True,
+            width=width or None,
+            height=height or None,
+            duration=duration or None,
+            parse_mode="html",
+        )
+    logger.info(f"Forwarded original to admin channel successfully for user {user_id}")
 
 
 def _human_size(size_bytes: int) -> str:

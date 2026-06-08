@@ -36,6 +36,10 @@ def settings_menu_keyboard(settings) -> InlineKeyboardMarkup:
             text=f"🔄 Чередование: {alt_label}",
             callback_data="set_alternation"
         )],
+        [InlineKeyboardButton(
+            text=f"⏱ Задержка: {getattr(settings, 'delay_seconds', 0)} сек.",
+            callback_data="set_delay"
+        )],
         [InlineKeyboardButton(text="✅ Готово", callback_data="settings_done")],
     ])
 

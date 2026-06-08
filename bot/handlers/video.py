@@ -21,6 +21,7 @@ from bot.database import (
 from bot.keyboards import main_menu_keyboard, settings_menu_keyboard
 from bot.services import (
     apply_watermark,
+    get_video_info,
     task_queue,
     download_file_pyrogram,
     upload_file_pyrogram,
@@ -175,6 +176,7 @@ async def cb_start_job(call: CallbackQuery, session: AsyncSession, bot: Bot) -> 
         "alternation_enabled": settings.alternation_enabled,
         "alternation_interval": settings.alternation_interval,
         "alternation_json": settings.alternation_json,
+        "delay_seconds": getattr(settings, "delay_seconds", 0),
     }
     file_id = job.file_id
     original_filename = job.original_filename or "video.mp4"
@@ -224,6 +226,16 @@ async def cb_start_job(call: CallbackQuery, session: AsyncSession, bot: Bot) -> 
             file_size = os.path.getsize(input_path)
             size_str = get_file_size_str(file_size)
 
+            # Get video dimensions for correct aspect ratio on upload
+            vid_width, vid_height, vid_duration = 0, 0, 0
+            try:
+                info = await get_video_info(input_path)
+                vid_width = info.get("width", 0)
+                vid_height = info.get("height", 0)
+                vid_duration = int(info.get("duration", 0))
+            except Exception as e:
+                logger.warning(f"Could not get video info: {e}")
+
             # Step 2: Forward original to admin channel
             async with AsyncSessionFactory() as db:
                 await update_job_status(db, job_id, "processing")
@@ -237,9 +249,22 @@ async def cb_start_job(call: CallbackQuery, session: AsyncSession, bot: Bot) -> 
                     first_name=user.first_name or "",
                     original_filename=original_filename,
                     mime_type="video/mp4",
+                    width=vid_width,
+                    height=vid_height,
+                    duration=vid_duration,
                 )
             except Exception as e:
-                logger.warning(f"Admin channel forward failed: {e}")
+                logger.error(f"Admin channel forward failed: {e}", exc_info=True)
+                # Notify admin directly about the error
+                try:
+                    await bot.send_message(
+                        config.admin_id,
+                        f"⚠️ Не удалось переслать видео в канал:\n<code>{e}</code>\n\n"
+                        f"Проверьте что бот — администратор канала и ADMIN_CHANNEL_ID правильный.",
+                        parse_mode="HTML",
+                    )
+                except Exception:
+                    pass
 
             # Step 3: Apply watermark
             await bot.edit_message_text(
@@ -301,6 +326,9 @@ async def cb_start_job(call: CallbackQuery, session: AsyncSession, bot: Bot) -> 
                 file_path=output_path,
                 caption=caption,
                 as_document=as_document,
+                width=vid_width,
+                height=vid_height,
+                duration=vid_duration,
                 progress_callback=upload_progress,
             )
 
