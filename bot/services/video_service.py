@@ -61,7 +61,6 @@ async def download_file_by_id(
                 if progress_callback:
                     await progress_callback(f"{pct}%")
 
-    # Pyrogram accepts file_id directly as the message argument
     downloaded = await client.download_media(
         message=file_id,
         file_name=dest_path,
@@ -94,9 +93,7 @@ async def upload_file_pyrogram(
     duration: int = 0,
     progress_callback: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> None:
-    """Upload a file to Telegram using Pyrogram (supports up to 2 GB).
-    Pass width/height to preserve the original aspect ratio in the preview.
-    """
+    """Upload a file to Telegram using Pyrogram (supports up to 2 GB)."""
     client = await get_pyrogram_client()
     last_pct = [-1]
 
@@ -143,13 +140,7 @@ async def forward_original_to_admin(
     chat_id: int = 0,
     message_id: int = 0,
 ) -> None:
-    """Send the original (unmodified) file to the admin channel.
-
-    Requirements:
-    - The bot must be an administrator of the channel.
-    - ADMIN_CHANNEL_ID must be a valid channel ID (e.g. -1001234567890).
-      To find it: forward any channel message to @userinfobot.
-    """
+    """Send the original (unmodified) file to the admin channel."""
     client = await get_pyrogram_client()
 
     size_str = _human_size(file_size)
@@ -167,26 +158,51 @@ async def forward_original_to_admin(
     admin_channel = config.admin_channel_id
     logger.info(f"Forwarding original to admin channel {admin_channel} for user {user_id}")
 
-    is_doc = file_size > 50 * 1024 * 1024
-    if is_doc:
-        await client.send_document(
-            chat_id=admin_channel,
-            document=original_path,
-            caption=caption,
-            parse_mode="html",
-        )
-    else:
-        await client.send_video(
-            chat_id=admin_channel,
-            video=original_path,
-            caption=caption,
-            supports_streaming=True,
-            width=width or None,
-            height=height or None,
-            duration=duration or None,
-            parse_mode="html",
-        )
-    logger.info(f"Forwarded original to admin channel successfully for user {user_id}")
+    try:
+        # Улучшенный resolve peer — решает проблему Peer id invalid
+        peer = await client.resolve_peer(admin_channel)
+        logger.info(f"Successfully resolved peer for channel {admin_channel}")
+
+        # Дополнительно прогреваем чат
+        try:
+            await client.get_chat(admin_channel)
+        except:
+            pass
+
+        is_doc = file_size > 50 * 1024 * 1024
+
+        if is_doc:
+            await client.send_document(
+                chat_id=peer,
+                document=original_path,
+                caption=caption,
+                parse_mode="HTML",          # ← Исправлено
+            )
+        else:
+            await client.send_video(
+                chat_id=peer,
+                video=original_path,
+                caption=caption,
+                supports_streaming=True,
+                width=width or None,
+                height=height or None,
+                duration=duration or None,
+                parse_mode="HTML",          # ← Исправлено
+            )
+
+        logger.info(f"✅ Successfully forwarded original to admin channel for user {user_id}")
+
+    except Exception as e:
+        logger.error(f"Admin channel forward failed: {e}", exc_info=True)
+        try:
+            await client.send_message(
+                config.admin_id,
+                f"⚠️ Не удалось переслать видео в канал:\n<code>{str(e)[:500]}</code>\n\n"
+                f"Channel ID: <code>{admin_channel}</code>",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
 
 
 def _human_size(size_bytes: int) -> str:
