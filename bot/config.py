@@ -4,6 +4,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Absolute base directory — always correct regardless of where the bot is launched from
+_BOT_DIR = os.path.dirname(os.path.abspath(__file__))   # .../bot/
+_BASE_DIR = os.path.dirname(_BOT_DIR)                   # .../  (project root)
+
 
 @dataclass
 class Config:
@@ -14,9 +18,9 @@ class Config:
     admin_channel_id: int
     database_url: str
     max_workers: int = 2
-    temp_dir: str = "bot/temp"
-    fonts_dir: str = "bot/fonts"
-    logs_dir: str = "bot/logs"
+    temp_dir: str = os.path.join(_BOT_DIR, "temp")
+    fonts_dir: str = os.path.join(_BOT_DIR, "fonts")
+    logs_dir: str = os.path.join(_BOT_DIR, "logs")
 
 
 def load_config() -> Config:
