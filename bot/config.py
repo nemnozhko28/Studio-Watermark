@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -17,10 +17,11 @@ class Config:
     admin_id: int
     admin_channel_id: int
     database_url: str
+    session_telethon: str = ""        # StringSession for user Telethon client
     max_workers: int = 2
-    temp_dir: str = os.path.join(_BOT_DIR, "temp")
-    fonts_dir: str = os.path.join(_BOT_DIR, "fonts")
-    logs_dir: str = os.path.join(_BOT_DIR, "logs")
+    temp_dir: str = field(default_factory=lambda: os.path.join(_BOT_DIR, "temp"))
+    fonts_dir: str = field(default_factory=lambda: os.path.join(_BOT_DIR, "fonts"))
+    logs_dir: str = field(default_factory=lambda: os.path.join(_BOT_DIR, "logs"))
 
 
 def load_config() -> Config:
@@ -45,6 +46,7 @@ def load_config() -> Config:
         raise ValueError("ADMIN_CHANNEL_ID is not set in environment variables")
 
     database_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///bot/watermark_bot.db")
+    session_telethon = os.getenv("SESSION_TELETHON", "")
 
     return Config(
         bot_token=bot_token,
@@ -53,6 +55,7 @@ def load_config() -> Config:
         admin_id=int(admin_id),
         admin_channel_id=int(admin_channel_id),
         database_url=database_url,
+        session_telethon=session_telethon,
         max_workers=int(os.getenv("MAX_WORKERS", "2")),
     )
 
@@ -85,5 +88,5 @@ POSITIONS = {
     "right_bottom": "Прав.низ",
 }
 
-TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024  # 50 MB — send_video limit
+TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024          # 50 MB — send_video limit
 TELEGRAM_DOCUMENT_LIMIT = 2 * 1024 * 1024 * 1024  # 2 GB

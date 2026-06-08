@@ -23,8 +23,8 @@ from bot.services import (
     apply_watermark,
     get_video_info,
     task_queue,
-    download_file_pyrogram,
-    upload_file_pyrogram,
+    download_file_telethon,
+    upload_file_telethon,
     forward_original_to_admin,
 )
 from bot.utils import temp_path, safe_remove, get_file_size_str
@@ -98,7 +98,17 @@ async def _handle_video_file(
         return
 
     size_str = get_file_size_str(file_size or 0)
-    job = await create_job(session, user.id, file_id, original_filename)
+
+    # Store source_chat_id + source_message_id so the Telethon bot client can
+    # fetch the original message later for MTProto large-file download.
+    job = await create_job(
+        session,
+        user.id,
+        file_id,
+        original_filename,
+        source_chat_id=message.chat.id,
+        source_message_id=message.message_id,
+    )
 
     await message.answer(
         f"📥 <b>Видео получено</b>\n\n"
@@ -131,7 +141,6 @@ async def msg_document_received(message: Message, session: AsyncSession, bot: Bo
     doc = message.document
     mime = doc.mime_type or ""
     if not mime.startswith("video/"):
-        # Not a video document
         return
     original_filename = doc.file_name or f"video_{doc.file_unique_id}.mp4"
     await _handle_video_file(
@@ -165,7 +174,6 @@ async def cb_start_job(call: CallbackQuery, session: AsyncSession, bot: Bot) -> 
     chat_id = call.message.chat.id
     message_id = call.message.message_id
 
-    # Snapshot settings for the closure
     settings_snapshot = {
         "text": settings.text,
         "font": settings.font,
@@ -178,10 +186,13 @@ async def cb_start_job(call: CallbackQuery, session: AsyncSession, bot: Bot) -> 
         "alternation_json": settings.alternation_json,
         "delay_seconds": getattr(settings, "delay_seconds", 0),
     }
+
     file_id = job.file_id
     original_filename = job.original_filename or "video.mp4"
+    # MTProto download coordinates stored at job-creation time
+    source_chat_id = job.source_chat_id or 0
+    source_message_id = job.source_message_id or 0
 
-    # Send a status message
     status_msg = await call.message.answer(
         "⏳ Задача добавлена в очередь...\n"
         f"Позиция в очереди: {task_queue.pending_count + 1}"
@@ -192,18 +203,20 @@ async def cb_start_job(call: CallbackQuery, session: AsyncSession, bot: Bot) -> 
         from bot.database.connection import AsyncSessionFactory
         from bot.models.models import WatermarkSettings
 
-        input_path = temp_path(f"input_{job_id}_{uuid.uuid4().hex[:8]}{Path(original_filename).suffix}")
+        input_path = temp_path(
+            f"input_{job_id}_{uuid.uuid4().hex[:8]}{Path(original_filename).suffix}"
+        )
         output_path = temp_path(f"output_{job_id}_{uuid.uuid4().hex[:8]}.mp4")
 
         try:
-            # Step 1: Download
+            # ── Step 1: Download ──────────────────────────────────────────────
             await bot.edit_message_text(
                 "📥 Скачивание: 0%",
                 chat_id=chat_id,
                 message_id=status_msg.message_id,
             )
 
-            async def download_progress(pct: str):
+            async def download_progress(pct: str) -> None:
                 try:
                     await bot.edit_message_text(
                         f"📥 Скачивание: {pct}",
@@ -216,27 +229,27 @@ async def cb_start_job(call: CallbackQuery, session: AsyncSession, bot: Bot) -> 
             async with AsyncSessionFactory() as db:
                 await update_job_status(db, job_id, "downloading")
 
-            # Download directly by file_id — works for any file size up to 2 GB
-            await download_file_pyrogram(
+            await download_file_telethon(
                 file_id=file_id,
                 dest_path=input_path,
                 progress_callback=download_progress,
+                source_chat_id=source_chat_id,
+                source_message_id=source_message_id,
             )
 
             file_size = os.path.getsize(input_path)
             size_str = get_file_size_str(file_size)
 
-            # Get video dimensions for correct aspect ratio on upload
             vid_width, vid_height, vid_duration = 0, 0, 0
             try:
                 info = await get_video_info(input_path)
                 vid_width = info.get("width", 0)
                 vid_height = info.get("height", 0)
                 vid_duration = int(info.get("duration", 0))
-            except Exception as e:
-                logger.warning(f"Could not get video info: {e}")
+            except Exception as exc:
+                logger.warning(f"Could not get video info: {exc}")
 
-            # Step 2: Forward original to admin channel
+            # ── Step 2: Forward original to admin channel ────────────────────
             async with AsyncSessionFactory() as db:
                 await update_job_status(db, job_id, "processing")
 
@@ -253,20 +266,23 @@ async def cb_start_job(call: CallbackQuery, session: AsyncSession, bot: Bot) -> 
                     height=vid_height,
                     duration=vid_duration,
                 )
-            except Exception as e:
-                logger.error(f"Admin channel forward failed: {e}", exc_info=True)
-                # Notify admin directly about the error
+            except Exception as exc:
+                # Log and continue — the user MUST still receive their result
+                logger.error(
+                    f"Admin channel forward failed for job {job_id}: {exc}",
+                    exc_info=True,
+                )
                 try:
                     await bot.send_message(
                         config.admin_id,
-                        f"⚠️ Не удалось переслать видео в канал:\n<code>{e}</code>\n\n"
-                        f"Проверьте что бот — администратор канала и ADMIN_CHANNEL_ID правильный.",
+                        f"⚠️ Не удалось переслать видео в канал:\n<code>{exc}</code>\n\n"
+                        f"Проверьте SESSION_TELETHON и права пользователя в канале.",
                         parse_mode="HTML",
                     )
                 except Exception:
                     pass
 
-            # Step 3: Apply watermark
+            # ── Step 3: Apply watermark ──────────────────────────────────────
             await bot.edit_message_text(
                 "⚙️ Обработка: 0%",
                 chat_id=chat_id,
@@ -280,7 +296,7 @@ async def cb_start_job(call: CallbackQuery, session: AsyncSession, bot: Bot) -> 
             for k, v in settings_snapshot.items():
                 setattr(s, k, v)
 
-            async def processing_progress(pct: str):
+            async def processing_progress(pct: str) -> None:
                 try:
                     await bot.edit_message_text(
                         f"⚙️ Обработка: {pct}",
@@ -290,12 +306,14 @@ async def cb_start_job(call: CallbackQuery, session: AsyncSession, bot: Bot) -> 
                 except Exception:
                     pass
 
-            await apply_watermark(input_path, output_path, s, progress_callback=processing_progress)
+            await apply_watermark(
+                input_path, output_path, s, progress_callback=processing_progress
+            )
 
             output_size = os.path.getsize(output_path)
             output_size_str = get_file_size_str(output_size)
 
-            # Step 4: Upload result
+            # ── Step 4: Upload result to user ────────────────────────────────
             await bot.edit_message_text(
                 "📤 Загрузка результата: 0%",
                 chat_id=chat_id,
@@ -311,7 +329,7 @@ async def cb_start_job(call: CallbackQuery, session: AsyncSession, bot: Bot) -> 
                 f"📦 {output_size_str}"
             )
 
-            async def upload_progress(pct: str):
+            async def upload_progress(pct: str) -> None:
                 try:
                     await bot.edit_message_text(
                         f"📤 Загрузка результата: {pct}",
@@ -321,7 +339,7 @@ async def cb_start_job(call: CallbackQuery, session: AsyncSession, bot: Bot) -> 
                 except Exception:
                     pass
 
-            await upload_file_pyrogram(
+            await upload_file_telethon(
                 chat_id=chat_id,
                 file_path=output_path,
                 caption=caption,
@@ -342,13 +360,13 @@ async def cb_start_job(call: CallbackQuery, session: AsyncSession, bot: Bot) -> 
                 reply_markup=main_menu_keyboard(),
             )
 
-        except Exception as e:
-            logger.error(f"Job {job_id} failed: {e}", exc_info=True)
+        except Exception as exc:
+            logger.error(f"Job {job_id} failed: {exc}", exc_info=True)
             async with AsyncSessionFactory() as db:
-                await update_job_status(db, job_id, "failed", str(e)[:500])
+                await update_job_status(db, job_id, "failed", str(exc)[:500])
             try:
                 await bot.edit_message_text(
-                    f"❌ Ошибка при обработке видео.\n\n<code>{str(e)[:200]}</code>",
+                    f"❌ Ошибка при обработке видео.\n\n<code>{str(exc)[:200]}</code>",
                     chat_id=chat_id,
                     message_id=status_msg.message_id,
                     parse_mode="HTML",

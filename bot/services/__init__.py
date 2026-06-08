@@ -1,9 +1,9 @@
 from .ffmpeg_service import apply_watermark, get_video_info
-from .video_service import (
-    get_pyrogram_client,
-    stop_pyrogram_client,
-    download_file_pyrogram,
-    upload_file_pyrogram,
+from .telethon_service import (
+    start_telethon_clients,
+    stop_telethon_clients,
+    download_file_telethon,
+    upload_file_telethon,
     forward_original_to_admin,
 )
 from .queue_service import task_queue
@@ -11,10 +11,10 @@ from .queue_service import task_queue
 __all__ = [
     "apply_watermark",
     "get_video_info",
-    "get_pyrogram_client",
-    "stop_pyrogram_client",
-    "download_file_pyrogram",
-    "upload_file_pyrogram",
+    "start_telethon_clients",
+    "stop_telethon_clients",
+    "download_file_telethon",
+    "upload_file_telethon",
     "forward_original_to_admin",
     "task_queue",
 ]

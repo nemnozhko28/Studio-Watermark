@@ -1,11 +1,10 @@
-import json
 import logging
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import select, update
+
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from bot.models import User, WatermarkSettings, Job
 
@@ -46,8 +45,7 @@ async def get_watermark_settings(
     session: AsyncSession, user_id: int
 ) -> Optional[WatermarkSettings]:
     """Fetch watermark settings for a user."""
-    result = await session.get(WatermarkSettings, user_id)
-    return result
+    return await session.get(WatermarkSettings, user_id)
 
 
 async def get_or_create_settings(
@@ -138,8 +136,16 @@ async def create_job(
     user_id: int,
     file_id: str,
     original_filename: Optional[str] = None,
+    source_chat_id: Optional[int] = None,
+    source_message_id: Optional[int] = None,
 ) -> Job:
-    job = Job(user_id=user_id, file_id=file_id, original_filename=original_filename)
+    job = Job(
+        user_id=user_id,
+        file_id=file_id,
+        original_filename=original_filename,
+        source_chat_id=source_chat_id,
+        source_message_id=source_message_id,
+    )
     session.add(job)
     await session.commit()
     await session.refresh(job)

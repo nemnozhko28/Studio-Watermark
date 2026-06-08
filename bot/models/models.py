@@ -40,6 +40,9 @@ class Job(Base):
     user_id: Mapped[int] = mapped_column(BigInteger)
     file_id: Mapped[str] = mapped_column(String(500))
     original_filename: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    # Source message coordinates — required for Telethon MTProto download
+    source_chat_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    source_message_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="pending")
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

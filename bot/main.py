@@ -15,7 +15,7 @@ from bot.config import config
 from bot.database import init_db, close_db
 from bot.handlers import setup_routers
 from bot.middlewares import DbSessionMiddleware
-from bot.services import stop_pyrogram_client, task_queue
+from bot.services import start_telethon_clients, stop_telethon_clients, task_queue
 from bot.utils import ensure_dirs
 
 
@@ -31,29 +31,30 @@ def setup_logging() -> None:
             logging.FileHandler(log_dir / "bot.log", encoding="utf-8"),
         ],
     )
-    # Quiet noisy libraries
-    logging.getLogger("pyrogram").setLevel(logging.WARNING)
+    logging.getLogger("telethon").setLevel(logging.WARNING)
     logging.getLogger("aiogram").setLevel(logging.INFO)
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
 
 
 async def on_startup(bot: Bot) -> None:
-    logging.getLogger(__name__).info("Starting bot...")
+    logger = logging.getLogger(__name__)
+    logger.info("Starting bot...")
     ensure_dirs()
     await init_db()
+    await start_telethon_clients()
     task_queue.start()
 
-    # Verify bot token
     me = await bot.get_me()
-    logging.getLogger(__name__).info(f"Bot started: @{me.username} (id={me.id})")
+    logger.info(f"Bot started: @{me.username} (id={me.id})")
 
 
 async def on_shutdown(bot: Bot) -> None:
-    logging.getLogger(__name__).info("Shutting down...")
+    logger = logging.getLogger(__name__)
+    logger.info("Shutting down...")
     await task_queue.stop()
-    await stop_pyrogram_client()
+    await stop_telethon_clients()
     await close_db()
-    logging.getLogger(__name__).info("Shutdown complete.")
+    logger.info("Shutdown complete.")
 
 
 async def main() -> None:
@@ -65,17 +66,12 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
 
-    # Use MemoryStorage (swap for RedisStorage in production if needed)
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
 
-    # Register middleware
     dp.update.middleware(DbSessionMiddleware())
-
-    # Register routers
     dp.include_router(setup_routers())
 
-    # Lifecycle hooks
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 
