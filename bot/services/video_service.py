@@ -46,6 +46,10 @@ async def download_file_by_id(
     dest_path: str,
     progress_callback: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> str:
+    """
+    Download a file from Telegram using file_id directly via Pyrogram.
+    Supports files of any size (up to 2 GB). No message_id needed.
+    """
     client = await get_pyrogram_client()
     last_pct = [-1]
 
@@ -57,6 +61,7 @@ async def download_file_by_id(
                 if progress_callback:
                     await progress_callback(f"{pct}%")
 
+    # Pyrogram accepts file_id directly as the message argument
     downloaded = await client.download_media(
         message=file_id,
         file_name=dest_path,
@@ -67,10 +72,12 @@ async def download_file_by_id(
     return downloaded
 
 
+# Keep old name as alias for backward compatibility
 async def download_file_pyrogram(
     file_id: str,
     dest_path: str,
     progress_callback: Optional[Callable[[str], Awaitable[None]]] = None,
+    # Legacy params — ignored
     chat_id: int = 0,
     message_id: int = 0,
 ) -> str:
@@ -87,6 +94,9 @@ async def upload_file_pyrogram(
     duration: int = 0,
     progress_callback: Optional[Callable[[str], Awaitable[None]]] = None,
 ) -> None:
+    """Upload a file to Telegram using Pyrogram (supports up to 2 GB).
+    Pass width/height to preserve the original aspect ratio in the preview.
+    """
     client = await get_pyrogram_client()
     last_pct = [-1]
 
@@ -129,28 +139,50 @@ async def forward_original_to_admin(
     width: int = 0,
     height: int = 0,
     duration: int = 0,
+    # Legacy params — ignored
+    chat_id: int = 0,
+    message_id: int = 0,
 ) -> None:
-    """Отправка оригинала в канал через Pyrogram (лучше работает с большими видео)"""
+    """Send the original (unmodified) file to the admin channel.
+
+    Requirements:
+    - The bot must be an administrator of the channel.
+    - ADMIN_CHANNEL_ID must be a valid channel ID (e.g. -1001234567890).
+      To find it: forward any channel message to @userinfobot.
+    """
     client = await get_pyrogram_client()
 
     size_str = _human_size(file_size)
+    fmt = Path(original_filename).suffix.lstrip(".").upper() or mime_type
 
     caption = (
         "🆕 <b>Новый файл</b>\n\n"
         f"👤 <b>ID пользователя:</b> <code>{user_id}</code>\n"
-        f"👤 <b>Имя:</b> {first_name}\n"
-        f"🔗 <b>Username:</b> @{username or 'нет'}\n\n"
+        f"🔗 <b>USERNAME:</b> @{username or 'нет'}\n"
+        f"📛 <b>Имя:</b> {first_name}\n\n"
         f"📦 <b>Размер:</b> {size_str}\n"
-        f"📄 <b>Имя:</b> <code>{original_filename}</code>"
+        f"🎞 <b>Формат:</b> {fmt}"
     )
 
     admin_channel = config.admin_channel_id
-    logger.info(f"Forwarding original ({size_str}) to admin channel via Pyrogram")
+    logger.info(f"Forwarding original to admin channel {admin_channel} for user {user_id}")
 
+    # Resolve and cache the peer — required for channels the bot hasn't sent to yet.
+    # Without this Pyrogram raises PeerIdInvalid even when the bot has admin rights.
     try:
-        # Прогреваем канал
         await client.get_chat(admin_channel)
+    except Exception as e:
+        logger.warning(f"get_chat({admin_channel}) failed: {e} — proceeding anyway")
 
+    is_doc = file_size > 50 * 1024 * 1024
+    if is_doc:
+        await client.send_document(
+            chat_id=admin_channel,
+            document=original_path,
+            caption=caption,
+            parse_mode="html",
+        )
+    else:
         await client.send_video(
             chat_id=admin_channel,
             video=original_path,
@@ -159,25 +191,9 @@ async def forward_original_to_admin(
             width=width or None,
             height=height or None,
             duration=duration or None,
-            parse_mode="HTML",
+            parse_mode="html",
         )
-
-        logger.info(f"✅ Successfully forwarded original video to admin channel")
-
-    except Exception as e:
-        logger.error(f"Pyrogram forward failed: {e}", exc_info=True)
-        
-        # Fallback: отправляем как документ
-        try:
-            await client.send_document(
-                chat_id=admin_channel,
-                document=original_path,
-                caption=caption + "\n\n<i>(отправлено как документ — большой размер)</i>",
-                parse_mode="HTML",
-            )
-            logger.info("✅ Fallback: sent as document")
-        except Exception as e2:
-            logger.error(f"Fallback also failed: {e2}")
+    logger.info(f"Forwarded original to admin channel successfully for user {user_id}")
 
 
 def _human_size(size_bytes: int) -> str:

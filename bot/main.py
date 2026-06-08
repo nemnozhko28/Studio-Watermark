@@ -31,6 +31,7 @@ def setup_logging() -> None:
             logging.FileHandler(log_dir / "bot.log", encoding="utf-8"),
         ],
     )
+    # Quiet noisy libraries
     logging.getLogger("pyrogram").setLevel(logging.WARNING)
     logging.getLogger("aiogram").setLevel(logging.INFO)
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
@@ -42,9 +43,7 @@ async def on_startup(bot: Bot) -> None:
     await init_db()
     task_queue.start()
 
-    # Тест канала отключён, чтобы не спамил ошибками
-    logging.getLogger(__name__).info("✅ Bot started successfully")
-
+    # Verify bot token
     me = await bot.get_me()
     logging.getLogger(__name__).info(f"Bot started: @{me.username} (id={me.id})")
 
@@ -66,12 +65,17 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
 
+    # Use MemoryStorage (swap for RedisStorage in production if needed)
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
 
+    # Register middleware
     dp.update.middleware(DbSessionMiddleware())
+
+    # Register routers
     dp.include_router(setup_routers())
 
+    # Lifecycle hooks
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 
