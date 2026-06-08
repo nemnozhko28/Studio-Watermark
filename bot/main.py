@@ -34,7 +34,6 @@ def setup_logging() -> None:
             logging.FileHandler(log_dir / "bot.log", encoding="utf-8"),
         ],
     )
-    # Quiet noisy libraries
     logging.getLogger("pyrogram").setLevel(logging.WARNING)
     logging.getLogger("aiogram").setLevel(logging.INFO)
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
@@ -46,21 +45,30 @@ async def on_startup(bot: Bot) -> None:
     await init_db()
     task_queue.start()
 
-    # === ТЕСТ ОТПРАВКИ В АДМИН КАНАЛ ===
+    # === ТЕСТ КАНАЛА ===
     try:
         from bot.services.video_service import get_pyrogram_client
         client = await get_pyrogram_client()
+        
+        await client.get_chat(config.admin_channel_id)  # Прогрев
+        
         await client.send_message(
             config.admin_channel_id,
-            "✅ <b>Бот успешно запущен</b>\n"
-            "Теперь может отправлять оригиналы видео в этот канал.",
+            "✅ <b>Бот успешно запущен</b>\nТеперь отправляет оригиналы видео в канал.",
             parse_mode=enums.ParseMode.HTML,
         )
         logging.getLogger(__name__).info("✅ Test message to admin channel sent successfully")
     except Exception as e:
         logging.getLogger(__name__).error(f"❌ Cannot send test message to admin channel: {e}")
+        try:
+            await bot.send_message(
+                config.admin_id,
+                f"⚠️ <b>Проблема с каналом</b>\n\n<code>{str(e)[:350]}</code>",
+                parse_mode=ParseMode.HTML,
+            )
+        except:
+            pass
 
-    # Verify bot token
     me = await bot.get_me()
     logging.getLogger(__name__).info(f"Bot started: @{me.username} (id={me.id})")
 
@@ -82,17 +90,12 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
 
-    # Use MemoryStorage
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
 
-    # Register middleware
     dp.update.middleware(DbSessionMiddleware())
-
-    # Register routers
     dp.include_router(setup_routers())
 
-    # Lifecycle hooks
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 
