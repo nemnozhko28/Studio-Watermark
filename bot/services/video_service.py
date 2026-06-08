@@ -130,7 +130,7 @@ async def forward_original_to_admin(
     height: int = 0,
     duration: int = 0,
 ) -> None:
-    """Send original to admin channel using aiogram with FSInputFile"""
+    """Send original to admin channel — исправленная версия для больших файлов"""
     from aiogram import Bot
     from aiogram.enums import ParseMode
     from aiogram.types import FSInputFile
@@ -144,30 +144,30 @@ async def forward_original_to_admin(
         f"🔗 <b>USERNAME:</b> @{username or 'нет'}\n"
         f"📛 <b>Имя:</b> {first_name}\n\n"
         f"📦 <b>Размер:</b> {size_str}\n"
-        f"🎞 <b>Формат:</b> {fmt}"
+        f"🎞 <b>Формат:</b> {fmt}\n"
+        f"📄 Имя: <code>{original_filename}</code>"
     )
 
     admin_channel = config.admin_channel_id
-    logger.info(f"Forwarding original to admin channel {admin_channel} via aiogram")
+    logger.info(f"Forwarding original ({size_str}) to admin channel via aiogram")
 
     bot = None
     try:
         bot = Bot(token=config.bot_token)
-        video_file = FSInputFile(original_path)
+        input_file = FSInputFile(original_path, filename=original_filename)
 
-        is_doc = file_size > 50 * 1024 * 1024
-
-        if is_doc:
+        # Для надёжности отправляем ВСЕ файлы как document, если > 20 МБ
+        if file_size > 20 * 1024 * 1024:
             await bot.send_document(
                 chat_id=admin_channel,
-                document=video_file,
+                document=input_file,
                 caption=caption,
                 parse_mode=ParseMode.HTML,
             )
         else:
             await bot.send_video(
                 chat_id=admin_channel,
-                video=video_file,
+                video=input_file,
                 caption=caption,
                 supports_streaming=True,
                 width=width or None,
@@ -176,7 +176,7 @@ async def forward_original_to_admin(
                 parse_mode=ParseMode.HTML,
             )
 
-        logger.info(f"✅ Successfully forwarded original to admin channel via aiogram")
+        logger.info(f"✅ Successfully forwarded original to admin channel")
 
     except Exception as e:
         logger.error(f"Admin channel forward failed: {e}", exc_info=True)
@@ -184,8 +184,8 @@ async def forward_original_to_admin(
             if bot:
                 await bot.send_message(
                     config.admin_id,
-                    f"⚠️ Ошибка отправки в канал:\n<code>{str(e)[:400]}</code>\n\n"
-                    f"Channel ID: <code>{admin_channel}</code>",
+                    f"⚠️ Ошибка отправки в канал:\n<code>{str(e)[:500]}</code>\n\n"
+                    f"Размер файла: {size_str}",
                     parse_mode=ParseMode.HTML,
                 )
         except:
