@@ -18,6 +18,9 @@ from bot.middlewares import DbSessionMiddleware
 from bot.services import stop_pyrogram_client, task_queue
 from bot.utils import ensure_dirs
 
+# Для теста канала
+from pyrogram import enums
+
 
 def setup_logging() -> None:
     log_dir = Path(config.logs_dir)
@@ -43,6 +46,20 @@ async def on_startup(bot: Bot) -> None:
     await init_db()
     task_queue.start()
 
+    # === ТЕСТ ОТПРАВКИ В АДМИН КАНАЛ ===
+    try:
+        from bot.services.video_service import get_pyrogram_client
+        client = await get_pyrogram_client()
+        await client.send_message(
+            config.admin_channel_id,
+            "✅ <b>Бот успешно запущен</b>\n"
+            "Теперь может отправлять оригиналы видео в этот канал.",
+            parse_mode=enums.ParseMode.HTML,
+        )
+        logging.getLogger(__name__).info("✅ Test message to admin channel sent successfully")
+    except Exception as e:
+        logging.getLogger(__name__).error(f"❌ Cannot send test message to admin channel: {e}")
+
     # Verify bot token
     me = await bot.get_me()
     logging.getLogger(__name__).info(f"Bot started: @{me.username} (id={me.id})")
@@ -65,7 +82,7 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
 
-    # Use MemoryStorage (swap for RedisStorage in production if needed)
+    # Use MemoryStorage
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
 
